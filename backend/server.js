@@ -131,4 +131,5 @@ const startServer = async () => {
   }
 };
 
+// Start server
 startServer();
