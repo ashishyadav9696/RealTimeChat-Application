@@ -296,13 +296,12 @@ button {
    ======================================== */
 
 .auth-page {
-  min-height: 100vh;
+  height: 100vh;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  flex-direction: column;
   background: var(--bg-primary);
   position: relative;
-  overflow: hidden;
+  overflow-y: auto;
 }
 
 .auth-page::before {
@@ -326,6 +325,7 @@ button {
   position: relative;
   z-index: 1;
   animation: fadeInUp 600ms ease-out;
+  margin: auto;
 }
 
 .auth-card {
