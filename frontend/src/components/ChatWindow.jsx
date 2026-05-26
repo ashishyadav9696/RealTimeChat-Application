@@ -4,7 +4,9 @@ import TypingIndicator from './TypingIndicator';
 const getMediaUrl = (url) => {
   if (!url) return '';
   if (url.startsWith('http://') || url.startsWith('https://')) return url;
-  return `http://localhost:5000${url}`;
+  const baseUrl = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000';
+  const cleanBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+  return `${cleanBaseUrl}${url}`;
 };
 
 function ChatWindow({
