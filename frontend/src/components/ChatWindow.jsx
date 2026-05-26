@@ -21,6 +21,10 @@ function ChatWindow({
   onlineUsers,
   loading,
   onBack,
+  onDeleteChat,
+  onSendRequest,
+  onAcceptRequest,
+  onRejectRequest,
 }) {
   const [message, setMessage] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
@@ -34,6 +38,16 @@ function ChatWindow({
   const fileInputRef = useRef(null);
   const typingTimeoutRef = useRef(null);
   const isTypingRef = useRef(false);
+
+  const handleDeleteClick = () => {
+    if (!selectedUser) return;
+    const confirmDelete = window.confirm(
+      `Are you sure you want to delete this chat? This will erase the message history for both of you.`
+    );
+    if (confirmDelete) {
+      onDeleteChat(selectedUser._id);
+    }
+  };
 
   const handleFileChange = (e) => {
     const file = e.target.files[0];
@@ -243,11 +257,23 @@ function ChatWindow({
             {isOnline ? 'Online' : 'Offline'}
           </div>
         </div>
+
+        {selectedUser.friendStatus === 'accepted' && (
+          <button
+            className="btn-delete-chat"
+            onClick={handleDeleteClick}
+            title="Delete Chat"
+          >
+            🗑
+          </button>
+        )}
       </div>
 
-      {/* Messages Area */}
-      <div className="chat-messages" id="chat-messages-area">
-        {loading ? (
+      {selectedUser.friendStatus === 'accepted' ? (
+        <>
+          {/* Messages Area */}
+          <div className="chat-messages" id="chat-messages-area">
+            {loading ? (
           // Loading skeletons
           <div
             style={{
@@ -472,6 +498,58 @@ function ChatWindow({
           </button>
         </div>
       </div>
+      </>
+      ) : (
+        <div className="not-connected-banner">
+          <div className="not-connected-card animate-scale-in">
+            <div className="not-connected-icon">👋</div>
+            <div className="not-connected-title">
+              {selectedUser.friendStatus === 'pending_received'
+                ? 'Connection Request Received'
+                : 'Connect to Chat'}
+            </div>
+            <p className="not-connected-text">
+              {selectedUser.friendStatus === 'none' &&
+                `You must be connected to message ${selectedUser.username}. Send a connection request to start chatting.`}
+              {selectedUser.friendStatus === 'pending_sent' &&
+                `Connection request sent. You will be able to message ${selectedUser.username} once they accept your request.`}
+              {selectedUser.friendStatus === 'pending_received' &&
+                `${selectedUser.username} wants to connect with you. Accept the request to start messaging.`}
+            </p>
+            <div className="banner-action-group">
+              {selectedUser.friendStatus === 'none' && (
+                <button
+                  className="btn-connect-banner"
+                  onClick={() => onSendRequest(selectedUser._id)}
+                >
+                  Connect with {selectedUser.username}
+                </button>
+              )}
+              {selectedUser.friendStatus === 'pending_sent' && (
+                <div className="status-pending-banner">
+                  Request Pending
+                </div>
+              )}
+              {selectedUser.friendStatus === 'pending_received' && (
+                <>
+                  <button
+                    className="btn-accept-banner"
+                    onClick={() => onAcceptRequest(selectedUser.requestId)}
+                  >
+                    Accept Request
+                  </button>
+                  <button
+                    className="btn-decline-banner"
+                    onClick={() => onRejectRequest(selectedUser.requestId)}
+                  >
+                    Decline
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Lightbox Modal */}
       {fullScreenImage && (

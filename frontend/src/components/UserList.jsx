@@ -1,6 +1,15 @@
 import { useState, useMemo } from 'react';
 
-function UserList({ users, selectedUser, onSelectUser, onlineUsers, currentUser }) {
+function UserList({
+  users,
+  selectedUser,
+  onSelectUser,
+  onlineUsers,
+  currentUser,
+  onSendRequest,
+  onAcceptRequest,
+  onRejectRequest,
+}) {
   const [searchQuery, setSearchQuery] = useState('');
 
   // Filter and sort users
@@ -98,6 +107,39 @@ function UserList({ users, selectedUser, onSelectUser, onlineUsers, currentUser 
                   <span className="user-item-preview">
                     {isOnline ? 'Online' : formatLastSeen(user.lastSeen)}
                   </span>
+                </div>
+
+                <div className="user-item-actions" onClick={(e) => e.stopPropagation()}>
+                  {user.friendStatus === 'none' && (
+                    <button
+                      className="btn-connect-inline"
+                      onClick={() => onSendRequest(user._id)}
+                      title="Connect"
+                    >
+                      Connect
+                    </button>
+                  )}
+                  {user.friendStatus === 'pending_sent' && (
+                    <span className="status-requested-inline">Requested</span>
+                  )}
+                  {user.friendStatus === 'pending_received' && (
+                    <div className="btn-group-inline">
+                      <button
+                        className="btn-accept-inline"
+                        onClick={() => onAcceptRequest(user.requestId)}
+                        title="Accept Request"
+                      >
+                        ✓
+                      </button>
+                      <button
+                        className="btn-decline-inline"
+                        onClick={() => onRejectRequest(user.requestId)}
+                        title="Decline Request"
+                      >
+                        ✗
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             );

@@ -2,6 +2,7 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const Message = require('../models/Message');
 const Conversation = require('../models/Conversation');
+const FriendRequest = require('../models/FriendRequest');
 
 // Map to track online users: userId -> socketId
 const onlineUsers = new Map();
@@ -55,6 +56,19 @@ const socketHandler = (io) => {
     socket.on('send-message', async (data) => {
       try {
         const { receiverId, content } = data;
+
+        // Check friendship status
+        const isConnected = await FriendRequest.findOne({
+          $or: [
+            { sender: userId, receiver: receiverId },
+            { sender: receiverId, receiver: userId }
+          ],
+          status: 'accepted'
+        });
+
+        if (!isConnected) {
+          return socket.emit('message-error', { message: 'You must be connected to send messages' });
+        }
 
         // Create message in DB
         const message = await Message.create({

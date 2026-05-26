@@ -1,6 +1,7 @@
 const { body, validationResult } = require('express-validator');
 const Message = require('../models/Message');
 const Conversation = require('../models/Conversation');
+const FriendRequest = require('../models/FriendRequest');
 
 // Validation rules for sending text messages
 const sendMessageValidation = [
@@ -103,6 +104,22 @@ const sendMessage = async (req, res) => {
       });
     }
 
+    // Check friendship status
+    const isConnected = await FriendRequest.findOne({
+      $or: [
+        { sender: senderId, receiver: receiverId },
+        { sender: receiverId, receiver: senderId }
+      ],
+      status: 'accepted'
+    });
+
+    if (!isConnected) {
+      return res.status(403).json({
+        success: false,
+        message: 'You must be connected to send messages'
+      });
+    }
+
     // Create message
     const message = await Message.create({
       sender: senderId,
@@ -163,6 +180,22 @@ const sendFileMessage = async (req, res) => {
       });
     }
 
+    // Check friendship status
+    const isConnected = await FriendRequest.findOne({
+      $or: [
+        { sender: senderId, receiver: receiverId },
+        { sender: receiverId, receiver: senderId }
+      ],
+      status: 'accepted'
+    });
+
+    if (!isConnected) {
+      return res.status(403).json({
+        success: false,
+        message: 'You must be connected to send messages'
+      });
+    }
+
     // Determine message type from mimetype
     let messageType = 'file';
     if (req.file.mimetype.startsWith('image/')) {
@@ -218,9 +251,53 @@ const sendFileMessage = async (req, res) => {
   }
 };
 
+// @desc    Delete conversation and messages between current user and target user
+// @route   DELETE /api/messages/conversation/:userId
+// @access  Private
+const deleteConversation = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const currentUserId = req.user._id;
+
+    // Delete all messages
+    await Message.deleteMany({
+      $or: [
+        { sender: currentUserId, receiver: userId },
+        { sender: userId, receiver: currentUserId }
+      ]
+    });
+
+    // Delete conversation record
+    await Conversation.findOneAndDelete({
+      participants: { $all: [currentUserId, userId] }
+    });
+
+    // Notify other user via Socket.io
+    const io = req.app.get('io');
+    if (io) {
+      const otherSocketId = io.onlineUsers?.get(userId.toString());
+      if (otherSocketId) {
+        io.to(otherSocketId).emit('chat-deleted', { userId: currentUserId });
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Conversation deleted successfully'
+    });
+  } catch (error) {
+    console.error('Delete conversation error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error deleting conversation'
+    });
+  }
+};
+
 module.exports = {
   getMessages,
   sendMessage,
   sendMessageValidation,
   sendFileMessage,
+  deleteConversation,
 };

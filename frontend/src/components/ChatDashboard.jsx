@@ -31,7 +31,17 @@ function ChatDashboard() {
     try {
       const response = await api.get('/users');
       if (response.data.success) {
-        setUsers(response.data.data);
+        const list = response.data.data;
+        setUsers(list);
+
+        // Keep selected user state in sync
+        const currentSelected = selectedUserRef.current;
+        if (currentSelected) {
+          const updated = list.find((u) => u._id === currentSelected._id);
+          if (updated) {
+            setSelectedUser(updated);
+          }
+        }
       }
     } catch (error) {
       console.error('Failed to fetch users:', error);
@@ -170,6 +180,40 @@ function ChatDashboard() {
       toast.error(message || 'Failed to send message');
     });
 
+    // Friend Request Received
+    socket.on('friend-request-received', (request) => {
+      fetchUsers();
+      toast(`${request.sender.username} sent you a connection request!`, {
+        icon: '👋',
+        duration: 4000,
+      });
+    });
+
+    // Friend Request Accepted
+    socket.on('friend-request-accepted', ({ requestId, userId }) => {
+      fetchUsers();
+      toast.success('Connection request accepted!');
+      const currentSelected = selectedUserRef.current;
+      if (currentSelected && currentSelected._id === userId) {
+        fetchMessages(userId);
+      }
+    });
+
+    // Friend Request Rejected
+    socket.on('friend-request-rejected', ({ requestId, userId }) => {
+      fetchUsers();
+      toast('Connection request declined or cancelled.', { icon: 'ℹ️' });
+    });
+
+    // Chat Deleted
+    socket.on('chat-deleted', ({ userId }) => {
+      const currentSelected = selectedUserRef.current;
+      if (currentSelected && currentSelected._id === userId) {
+        setMessages([]);
+        toast('This conversation was deleted.', { icon: '🗑️' });
+      }
+    });
+
     // Fetch initial users
     fetchUsers();
 
@@ -256,6 +300,83 @@ function ChatDashboard() {
     toast.success('Logged out successfully');
   }, [logout]);
 
+  // Send connection request
+  const handleSendRequest = useCallback(async (receiverId) => {
+    try {
+      const response = await api.post('/users/request/send', { receiverId });
+      if (response.data.success) {
+        toast.success('Connection request sent!');
+        setUsers((prev) =>
+          prev.map((u) =>
+            u._id === receiverId
+              ? { ...u, friendStatus: 'pending_sent', requestId: response.data.data._id }
+              : u
+          )
+        );
+        setSelectedUser((prev) => {
+          if (prev && prev._id === receiverId) {
+            return { ...prev, friendStatus: 'pending_sent', requestId: response.data.data._id };
+          }
+          return prev;
+        });
+      }
+    } catch (error) {
+      console.error('Failed to send connection request:', error);
+      toast.error(error.response?.data?.message || 'Failed to send request');
+    }
+  }, []);
+
+  // Accept connection request
+  const handleAcceptRequest = useCallback(async (requestId) => {
+    try {
+      const response = await api.post('/users/request/accept', { requestId });
+      if (response.data.success) {
+        toast.success('Connection request accepted!');
+        await fetchUsers();
+        const currentSelected = selectedUserRef.current;
+        if (currentSelected && currentSelected.requestId === requestId) {
+          setSelectedUser((prev) => ({ ...prev, friendStatus: 'accepted' }));
+          fetchMessages(currentSelected._id);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to accept connection request:', error);
+      toast.error(error.response?.data?.message || 'Failed to accept request');
+    }
+  }, [fetchUsers, fetchMessages]);
+
+  // Reject/Decline connection request
+  const handleRejectRequest = useCallback(async (requestId) => {
+    try {
+      const response = await api.post('/users/request/reject', { requestId });
+      if (response.data.success) {
+        toast.success('Connection request declined/cancelled');
+        await fetchUsers();
+        const currentSelected = selectedUserRef.current;
+        if (currentSelected && currentSelected.requestId === requestId) {
+          setSelectedUser((prev) => ({ ...prev, friendStatus: 'none', requestId: null }));
+        }
+      }
+    } catch (error) {
+      console.error('Failed to reject connection request:', error);
+      toast.error(error.response?.data?.message || 'Failed to reject request');
+    }
+  }, [fetchUsers]);
+
+  // Delete chat conversation
+  const handleDeleteChat = useCallback(async (userId) => {
+    try {
+      const response = await api.delete(`/messages/conversation/${userId}`);
+      if (response.data.success) {
+        toast.success('Chat deleted successfully');
+        setMessages([]);
+      }
+    } catch (error) {
+      console.error('Failed to delete chat:', error);
+      toast.error(error.response?.data?.message || 'Failed to delete chat');
+    }
+  }, []);
+
   return (
     <div className="chat-dashboard">
       {/* Connection status banner */}
@@ -296,6 +417,9 @@ function ChatDashboard() {
           onSelectUser={handleSelectUser}
           onlineUsers={onlineUsers}
           currentUser={user}
+          onSendRequest={handleSendRequest}
+          onAcceptRequest={handleAcceptRequest}
+          onRejectRequest={handleRejectRequest}
         />
       </div>
 
@@ -312,6 +436,10 @@ function ChatDashboard() {
         onlineUsers={onlineUsers}
         loading={loadingMessages}
         onBack={handleBack}
+        onDeleteChat={handleDeleteChat}
+        onSendRequest={handleSendRequest}
+        onAcceptRequest={handleAcceptRequest}
+        onRejectRequest={handleRejectRequest}
       />
     </div>
   );
