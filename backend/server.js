@@ -29,9 +29,14 @@ app.use(
 );
 
 // CORS configuration
+let clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
+if (typeof clientUrl === 'string') {
+  clientUrl = clientUrl.trim().replace(/[\r\n]/g, '');
+}
+
 app.use(
   cors({
-    origin: process.env.CLIENT_URL || 'http://localhost:5173',
+    origin: clientUrl,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
     allowedHeaders: ['Content-Type', 'Authorization'],
