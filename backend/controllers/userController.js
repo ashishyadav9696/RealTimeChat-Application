@@ -1,6 +1,8 @@
 const User = require('../models/User');
 const FriendRequest = require('../models/FriendRequest');
 const Conversation = require('../models/Conversation');
+const Group = require('../models/Group');
+const { uploadFile } = require('../config/cloudinary');
 
 // @desc    Get all users (except current user) with connection status
 // @route   GET /api/users
@@ -11,7 +13,7 @@ const getUsers = async (req, res) => {
 
     // Fetch all users except current
     const users = await User.find({ _id: { $ne: currentUserId } })
-      .select('username email avatar isOnline lastSeen')
+      .select('username email avatar profilePicture isOnline lastSeen')
       .sort({ isOnline: -1, username: 1 });
 
     // Fetch all friend requests involving current user
@@ -69,7 +71,7 @@ const getUsers = async (req, res) => {
 const getUserById = async (req, res) => {
   try {
     const user = await User.findById(req.params.id).select(
-      'username email avatar isOnline lastSeen'
+      'username email avatar profilePicture isOnline lastSeen'
     );
 
     if (!user) {
@@ -318,10 +320,221 @@ const rejectFriendRequest = async (req, res) => {
   }
 };
 
+// @desc    Update user profile (profile picture)
+// @route   PUT /api/users/profile
+// @access  Private
+const updateProfile = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const updateData = {};
+
+    if (req.file) {
+      updateData.profilePicture = await uploadFile(req.file.path, 'avatars');
+    }
+
+    if (req.body.username) {
+      updateData.username = req.body.username;
+    }
+
+    const user = await User.findByIdAndUpdate(userId, updateData, {
+      new: true,
+      runValidators: true,
+    }).select('username email avatar profilePicture isOnline lastSeen');
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: user,
+    });
+  } catch (error) {
+    console.error('Update profile error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error updating profile',
+    });
+  }
+};
+
+// @desc    Create a new group
+// @route   POST /api/users/groups
+// @access  Private
+const createGroup = async (req, res) => {
+  try {
+    const { name, description, members } = req.body;
+    const adminId = req.user._id;
+
+    if (!name || !members || members.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Group name and at least one member are required',
+      });
+    }
+
+    // Ensure admin is included in members
+    const allMembers = [adminId.toString(), ...members.filter(m => m !== adminId.toString())];
+
+    const avatarUrl = req.file ? await uploadFile(req.file.path, 'groups') : '';
+
+    const group = await Group.create({
+      name,
+      description: description || '',
+      admin: adminId,
+      members: allMembers,
+      avatar: avatarUrl,
+    });
+
+    const populatedGroup = await Group.findById(group._id)
+      .populate('admin', 'username avatar profilePicture')
+      .populate('members', 'username avatar profilePicture isOnline');
+
+    res.status(201).json({
+      success: true,
+      data: populatedGroup,
+    });
+  } catch (error) {
+    console.error('Create group error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error creating group',
+    });
+  }
+};
+
+// @desc    Get user's groups
+// @route   GET /api/users/groups
+// @access  Private
+const getGroups = async (req, res) => {
+  try {
+    const userId = req.user._id;
+
+    const groups = await Group.find({ members: userId })
+      .populate('admin', 'username avatar profilePicture')
+      .populate('members', 'username avatar profilePicture isOnline')
+      .populate('lastMessage')
+      .sort({ updatedAt: -1 });
+
+    res.status(200).json({
+      success: true,
+      data: groups,
+    });
+  } catch (error) {
+    console.error('Get groups error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error fetching groups',
+    });
+  }
+};
+
+// @desc    Leave a group
+// @route   POST /api/users/groups/:groupId/leave
+// @access  Private
+const leaveGroup = async (req, res) => {
+  try {
+    const { groupId } = req.params;
+    const userId = req.user._id;
+
+    const group = await Group.findById(groupId);
+    if (!group) {
+      return res.status(404).json({
+        success: false,
+        message: 'Group not found',
+      });
+    }
+
+    // Check if user is a member of the group
+    if (!group.members.includes(userId.toString())) {
+      return res.status(400).json({
+        success: false,
+        message: 'You are not a member of this group',
+      });
+    }
+
+    // Remove user from members
+    group.members = group.members.filter((m) => m.toString() !== userId.toString());
+
+    let messageContent = `${req.user.username} left the group`;
+
+    // Handle admin transfer if leaving user is the admin
+    if (group.admin.toString() === userId.toString()) {
+      if (group.members.length > 0) {
+        // Appoint first remaining member as new admin
+        group.admin = group.members[0];
+        const newAdminUser = await User.findById(group.admin);
+        const newAdminName = newAdminUser ? newAdminUser.username : 'another member';
+        messageContent = `${req.user.username} left the group. ${newAdminName} is the new admin.`;
+      } else {
+        // No members left — delete the group and return
+        await Group.findByIdAndDelete(groupId);
+        
+        // Also delete any messages belonging to this group
+        const Message = require('../models/Message');
+        await Message.deleteMany({ group: groupId });
+
+        return res.status(200).json({
+          success: true,
+          message: 'Group deleted because all members left',
+          data: { groupId, deleted: true },
+        });
+      }
+    }
+
+    await group.save();
+
+    // Create a system message in the database so it appears in the chat
+    const Message = require('../models/Message');
+    const sysMsg = await Message.create({
+      sender: userId,
+      group: groupId,
+      content: messageContent,
+      messageType: 'text',
+    });
+
+    const populatedSysMsg = await Message.findById(sysMsg._id)
+      .populate('sender', 'username avatar profilePicture');
+
+    // Notify remaining group members via Socket.io
+    const io = req.app.get('io');
+    if (io) {
+      group.members.forEach((memberId) => {
+        const socketId = io.onlineUsers?.get(memberId.toString());
+        if (socketId) {
+          // Send system message
+          io.to(socketId).emit('receive-message', populatedSysMsg);
+          // Also emit a group update event to refresh members lists
+          io.to(socketId).emit('group-updated', { groupId });
+        }
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Left group successfully',
+      data: { groupId, deleted: false },
+    });
+  } catch (error) {
+    console.error('Leave group error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error leaving group',
+    });
+  }
+};
+
 module.exports = {
   getUsers,
   getUserById,
   sendFriendRequest,
   acceptFriendRequest,
   rejectFriendRequest,
+  updateProfile,
+  createGroup,
+  getGroups,
+  leaveGroup,
 };

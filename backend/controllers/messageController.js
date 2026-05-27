@@ -2,6 +2,8 @@ const { body, validationResult } = require('express-validator');
 const Message = require('../models/Message');
 const Conversation = require('../models/Conversation');
 const FriendRequest = require('../models/FriendRequest');
+const Group = require('../models/Group');
+const { uploadFile } = require('../config/cloudinary');
 
 // Validation rules for sending text messages
 const sendMessageValidation = [
@@ -25,39 +27,64 @@ const getMessages = async (req, res) => {
     const limit = parseInt(req.query.limit) || 50;
     const skip = (page - 1) * limit;
 
-    // Get messages between the two users
-    const messages = await Message.find({
-      $or: [
-        { sender: currentUserId, receiver: userId },
-        { sender: userId, receiver: currentUserId },
-      ],
-    })
-      .sort({ createdAt: 1 })
-      .skip(skip)
-      .limit(limit)
-      .populate('sender', 'username avatar')
-      .populate('receiver', 'username avatar');
+    // Check if the target is a group
+    const group = await Group.findById(userId);
 
-    // Mark unread messages from the other user as read
-    await Message.updateMany(
-      {
-        sender: userId,
-        receiver: currentUserId,
-        isRead: false,
-      },
-      {
-        isRead: true,
-        readAt: new Date(),
+    let messages;
+    let total;
+
+    if (group) {
+      // Ensure current user is a member of the group
+      if (!group.members.includes(currentUserId.toString())) {
+        return res.status(403).json({
+          success: false,
+          message: 'You are not a member of this group',
+        });
       }
-    );
 
-    // Get total count for pagination
-    const total = await Message.countDocuments({
-      $or: [
-        { sender: currentUserId, receiver: userId },
-        { sender: userId, receiver: currentUserId },
-      ],
-    });
+      // Get group messages
+      messages = await Message.find({ group: userId })
+        .sort({ createdAt: 1 })
+        .skip(skip)
+        .limit(limit)
+        .populate('sender', 'username avatar profilePicture');
+
+      total = await Message.countDocuments({ group: userId });
+    } else {
+      // Get messages between the two users
+      messages = await Message.find({
+        $or: [
+          { sender: currentUserId, receiver: userId },
+          { sender: userId, receiver: currentUserId },
+        ],
+      })
+        .sort({ createdAt: 1 })
+        .skip(skip)
+        .limit(limit)
+        .populate('sender', 'username avatar profilePicture')
+        .populate('receiver', 'username avatar profilePicture');
+
+      // Mark unread messages from the other user as read
+      await Message.updateMany(
+        {
+          sender: userId,
+          receiver: currentUserId,
+          isRead: false,
+        },
+        {
+          isRead: true,
+          readAt: new Date(),
+        }
+      );
+
+      // Get total count for pagination
+      total = await Message.countDocuments({
+        $or: [
+          { sender: currentUserId, receiver: userId },
+          { sender: userId, receiver: currentUserId },
+        ],
+      });
+    }
 
     res.status(200).json({
       success: true,
@@ -96,47 +123,79 @@ const sendMessage = async (req, res) => {
     const { receiverId, content } = req.body;
     const senderId = req.user._id;
 
-    // Don't allow sending messages to yourself
-    if (senderId.toString() === receiverId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Cannot send a message to yourself',
+    // Check if the recipient is a group
+    const group = await Group.findById(receiverId);
+    let message;
+    let populatedMessage;
+
+    if (group) {
+      // Ensure sender is a member of the group
+      if (!group.members.includes(senderId.toString())) {
+        return res.status(403).json({
+          success: false,
+          message: 'You must be a member of the group to send messages',
+        });
+      }
+
+      // Create group message
+      message = await Message.create({
+        sender: senderId,
+        group: receiverId,
+        content,
+        messageType: 'text',
       });
-    }
 
-    // Check friendship status
-    const isConnected = await FriendRequest.findOne({
-      $or: [
-        { sender: senderId, receiver: receiverId },
-        { sender: receiverId, receiver: senderId }
-      ],
-      status: 'accepted'
-    });
+      // Update group's last message
+      group.lastMessage = message._id;
+      await group.save();
 
-    if (!isConnected) {
-      return res.status(403).json({
-        success: false,
-        message: 'You must be connected to send messages'
+      // Populate sender details
+      populatedMessage = await Message.findById(message._id)
+        .populate('sender', 'username avatar profilePicture');
+    } else {
+      // Private message logic
+      // Don't allow sending messages to yourself
+      if (senderId.toString() === receiverId) {
+        return res.status(400).json({
+          success: false,
+          message: 'Cannot send a message to yourself',
+        });
+      }
+
+      // Check friendship status
+      const isConnected = await FriendRequest.findOne({
+        $or: [
+          { sender: senderId, receiver: receiverId },
+          { sender: receiverId, receiver: senderId }
+        ],
+        status: 'accepted'
       });
+
+      if (!isConnected) {
+        return res.status(403).json({
+          success: false,
+          message: 'You must be connected to send messages'
+        });
+      }
+
+      // Create private message
+      message = await Message.create({
+        sender: senderId,
+        receiver: receiverId,
+        content,
+        messageType: 'text',
+      });
+
+      // Update or create conversation
+      const conversation = await Conversation.findOrCreate(senderId, receiverId);
+      conversation.lastMessage = message._id;
+      await conversation.save();
+
+      // Populate sender and receiver
+      populatedMessage = await Message.findById(message._id)
+        .populate('sender', 'username avatar profilePicture')
+        .populate('receiver', 'username avatar profilePicture');
     }
-
-    // Create message
-    const message = await Message.create({
-      sender: senderId,
-      receiver: receiverId,
-      content,
-      messageType: 'text',
-    });
-
-    // Update or create conversation
-    const conversation = await Conversation.findOrCreate(senderId, receiverId);
-    conversation.lastMessage = message._id;
-    await conversation.save();
-
-    // Populate and return the message
-    const populatedMessage = await Message.findById(message._id)
-      .populate('sender', 'username avatar')
-      .populate('receiver', 'username avatar');
 
     res.status(201).json({
       success: true,
@@ -173,29 +232,6 @@ const sendFileMessage = async (req, res) => {
       });
     }
 
-    if (senderId.toString() === receiverId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Cannot send a message to yourself',
-      });
-    }
-
-    // Check friendship status
-    const isConnected = await FriendRequest.findOne({
-      $or: [
-        { sender: senderId, receiver: receiverId },
-        { sender: receiverId, receiver: senderId }
-      ],
-      status: 'accepted'
-    });
-
-    if (!isConnected) {
-      return res.status(403).json({
-        success: false,
-        message: 'You must be connected to send messages'
-      });
-    }
-
     // Determine message type from mimetype
     let messageType = 'file';
     if (req.file.mimetype.startsWith('image/')) {
@@ -204,37 +240,109 @@ const sendFileMessage = async (req, res) => {
       messageType = 'video';
     }
 
-    // Build file URL
-    const fileUrl = `/uploads/${req.file.filename}`;
+    // Upload to Cloudinary / local fallback
+    const fileUrl = await uploadFile(req.file.path, 'messages');
 
-    // Create message
-    const message = await Message.create({
-      sender: senderId,
-      receiver: receiverId,
-      content: req.body.content || '',
-      messageType,
-      fileUrl,
-      fileName: req.file.originalname,
-      fileSize: req.file.size,
-      mimeType: req.file.mimetype,
-    });
+    // Check if the recipient is a group
+    const group = await Group.findById(receiverId);
+    let message;
+    let populatedMessage;
 
-    // Update or create conversation
-    const conversation = await Conversation.findOrCreate(senderId, receiverId);
-    conversation.lastMessage = message._id;
-    await conversation.save();
+    if (group) {
+      // Ensure sender is a member of the group
+      if (!group.members.includes(senderId.toString())) {
+        return res.status(403).json({
+          success: false,
+          message: 'You must be a member of the group to send messages',
+        });
+      }
 
-    // Populate and return the message
-    const populatedMessage = await Message.findById(message._id)
-      .populate('sender', 'username avatar')
-      .populate('receiver', 'username avatar');
+      // Create group message
+      message = await Message.create({
+        sender: senderId,
+        group: receiverId,
+        content: req.body.content || '',
+        messageType,
+        fileUrl,
+        fileName: req.file.originalname,
+        fileSize: req.file.size,
+        mimeType: req.file.mimetype,
+      });
 
-    // Emit real-time message via socket if receiver is online
-    const io = req.app.get('io');
-    if (io) {
-      const receiverSocketId = io.onlineUsers?.get(receiverId.toString());
-      if (receiverSocketId) {
-        io.to(receiverSocketId).emit('receive-message', populatedMessage);
+      // Update group
+      group.lastMessage = message._id;
+      await group.save();
+
+      // Populate message
+      populatedMessage = await Message.findById(message._id)
+        .populate('sender', 'username avatar profilePicture');
+
+      // Emit real-time message via socket to all other group members
+      const io = req.app.get('io');
+      if (io) {
+        group.members.forEach((memberId) => {
+          if (memberId.toString() !== senderId.toString()) {
+            const socketId = io.onlineUsers?.get(memberId.toString());
+            if (socketId) {
+              io.to(socketId).emit('receive-message', populatedMessage);
+            }
+          }
+        });
+      }
+    } else {
+      // Private message check
+      if (senderId.toString() === receiverId) {
+        return res.status(400).json({
+          success: false,
+          message: 'Cannot send a message to yourself',
+        });
+      }
+
+      // Check friendship status
+      const isConnected = await FriendRequest.findOne({
+        $or: [
+          { sender: senderId, receiver: receiverId },
+          { sender: receiverId, receiver: senderId }
+        ],
+        status: 'accepted'
+      });
+
+      if (!isConnected) {
+        return res.status(403).json({
+          success: false,
+          message: 'You must be connected to send messages'
+        });
+      }
+
+      // Create message
+      message = await Message.create({
+        sender: senderId,
+        receiver: receiverId,
+        content: req.body.content || '',
+        messageType,
+        fileUrl,
+        fileName: req.file.originalname,
+        fileSize: req.file.size,
+        mimeType: req.file.mimetype,
+      });
+
+      // Update conversation
+      const conversation = await Conversation.findOrCreate(senderId, receiverId);
+      conversation.lastMessage = message._id;
+      await conversation.save();
+
+      // Populate message
+      populatedMessage = await Message.findById(message._id)
+        .populate('sender', 'username avatar profilePicture')
+        .populate('receiver', 'username avatar profilePicture');
+
+      // Emit real-time message via socket if receiver is online
+      const io = req.app.get('io');
+      if (io) {
+        const receiverSocketId = io.onlineUsers?.get(receiverId.toString());
+        if (receiverSocketId) {
+          io.to(receiverSocketId).emit('receive-message', populatedMessage);
+        }
       }
     }
 
@@ -294,10 +402,81 @@ const deleteConversation = async (req, res) => {
   }
 };
 
+// @desc    Get unread message counts grouped by sender
+// @route   GET /api/messages/unread/counts
+// @access  Private
+const getUnreadCounts = async (req, res) => {
+  try {
+    const currentUserId = req.user._id;
+
+    const counts = await Message.aggregate([
+      {
+        $match: {
+          receiver: currentUserId,
+          isRead: false,
+        },
+      },
+      {
+        $group: {
+          _id: '$sender',
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    // Convert to { userId: count } format
+    const unreadCounts = {};
+    counts.forEach((item) => {
+      unreadCounts[item._id.toString()] = item.count;
+    });
+
+    res.status(200).json({
+      success: true,
+      data: unreadCounts,
+    });
+  } catch (error) {
+    console.error('Get unread counts error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error fetching unread counts',
+    });
+  }
+};
+
+// @desc    Get call logs / history
+// @route   GET /api/messages/calls/history
+// @access  Private
+const getCallHistory = async (req, res) => {
+  try {
+    const currentUserId = req.user._id;
+
+    const calls = await Message.find({
+      messageType: 'call',
+      $or: [{ sender: currentUserId }, { receiver: currentUserId }],
+    })
+      .sort({ createdAt: -1 })
+      .populate('sender', 'username avatar profilePicture')
+      .populate('receiver', 'username avatar profilePicture');
+
+    res.status(200).json({
+      success: true,
+      data: calls,
+    });
+  } catch (error) {
+    console.error('Get call history error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error fetching call history',
+    });
+  }
+};
+
 module.exports = {
   getMessages,
   sendMessage,
   sendMessageValidation,
   sendFileMessage,
   deleteConversation,
+  getUnreadCounts,
+  getCallHistory,
 };

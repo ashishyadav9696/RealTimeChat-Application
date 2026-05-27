@@ -152,11 +152,21 @@ export function AuthProvider({ children }) {
     dispatch({ type: 'LOGOUT' });
   };
 
+  // Update user profile details
+  const updateUser = (updatedUser) => {
+    localStorage.setItem('chatsphere_user', JSON.stringify(updatedUser));
+    dispatch({
+      type: 'SET_USER',
+      payload: updatedUser,
+    });
+  };
+
   const value = {
     ...state,
     login,
     register,
     logout,
+    updateUser,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

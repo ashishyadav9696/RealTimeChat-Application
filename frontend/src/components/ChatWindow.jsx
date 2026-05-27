@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { ArrowLeft, Trash2, Paperclip, Send, X, File, Download, Check, CheckCheck, Phone, Video, MessageSquare, UserPlus, Clock, PhoneMissed, LogOut } from 'lucide-react';
 import TypingIndicator from './TypingIndicator';
 
 const getMediaUrl = (url) => {
@@ -25,6 +26,8 @@ function ChatWindow({
   onSendRequest,
   onAcceptRequest,
   onRejectRequest,
+  onStartCall,
+  onLeaveGroup,
 }) {
   const [message, setMessage] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
@@ -39,11 +42,21 @@ function ChatWindow({
   const typingTimeoutRef = useRef(null);
   const isTypingRef = useRef(false);
 
+  const handleLeaveGroupClick = () => {
+    if (!selectedUser) return;
+    const confirmLeave = window.confirm(`Are you sure you want to leave the group "${selectedUser.name}"?`);
+    if (confirmLeave) {
+      onLeaveGroup(selectedUser._id);
+    }
+  };
+
   const handleDeleteClick = () => {
     if (!selectedUser) return;
-    const confirmDelete = window.confirm(
-      `Are you sure you want to delete this chat? This will erase the message history for both of you.`
-    );
+    const isGroup = !!selectedUser.members;
+    const confirmMessage = isGroup
+      ? `Are you sure you want to delete this group chat history?`
+      : `Are you sure you want to delete this chat? This will erase the message history for both of you.`;
+    const confirmDelete = window.confirm(confirmMessage);
     if (confirmDelete) {
       onDeleteChat(selectedUser._id);
     }
@@ -216,7 +229,9 @@ function ChatWindow({
     return (
       <div className="chat-main">
         <div className="chat-empty">
-          <div className="chat-empty-icon">💬</div>
+          <div className="chat-empty-icon">
+            <MessageSquare />
+          </div>
           <h3>Welcome to ChatSphere</h3>
           <p>
             Select a conversation from the sidebar to start chatting, or search
@@ -229,6 +244,8 @@ function ChatWindow({
 
   const isOnline = onlineUsers.includes(selectedUser._id);
   const groupedMessages = getMessagesWithDividers();
+  const isGroup = !!selectedUser.members;
+  const canChat = isGroup || selectedUser.friendStatus === 'accepted';
 
   return (
     <div className="chat-main">
@@ -239,37 +256,78 @@ function ChatWindow({
           onClick={onBack}
           aria-label="Back to conversations"
         >
-          ←
+          <ArrowLeft />
         </button>
 
-        <div className={`user-avatar ${isOnline ? 'online' : ''}`}>
-          {selectedUser.avatar ||
-            selectedUser.username.substring(0, 2).toUpperCase()}
-          <span
-            className={`user-status-dot ${isOnline ? 'online' : ''}`}
-          ></span>
+        <div className={`user-avatar ${!isGroup && isOnline ? 'online' : ''}`}>
+          {isGroup ? (
+            selectedUser.avatar ? (
+              <img src={getMediaUrl(selectedUser.avatar)} alt={selectedUser.name} />
+            ) : (
+              selectedUser.name.substring(0, 2).toUpperCase()
+            )
+          ) : selectedUser.profilePicture ? (
+            <img src={getMediaUrl(selectedUser.profilePicture)} alt={selectedUser.username} />
+          ) : (
+            selectedUser.avatar ||
+            selectedUser.username.substring(0, 2).toUpperCase()
+          )}
+          {!isGroup && (
+            <span
+              className={`user-status-dot ${isOnline ? 'online' : ''}`}
+            ></span>
+          )}
         </div>
 
         <div className="chat-header-info">
-          <div className="chat-header-name">{selectedUser.username}</div>
+          <div className="chat-header-name">{isGroup ? selectedUser.name : selectedUser.username}</div>
           <div className="chat-header-status">
-            <span className={`mini-dot ${isOnline ? 'online' : ''}`}></span>
-            {isOnline ? 'Online' : 'Offline'}
+            {!isGroup && <span className={`mini-dot ${isOnline ? 'online' : ''}`}></span>}
+            {isGroup ? `${selectedUser.members?.length || 0} members` : (isOnline ? 'Online' : 'Offline')}
           </div>
         </div>
 
-        {selectedUser.friendStatus === 'accepted' && (
-          <button
-            className="btn-delete-chat"
-            onClick={handleDeleteClick}
-            title="Delete Chat"
-          >
-            🗑
-          </button>
+        {canChat && (
+          <div className="chat-header-actions">
+            {!isGroup && (
+              <>
+                <button
+                  className="header-action-btn call-audio"
+                  onClick={() => onStartCall && onStartCall(selectedUser._id, 'audio')}
+                  title="Audio Call"
+                >
+                  <Phone />
+                </button>
+                <button
+                  className="header-action-btn call-video"
+                  onClick={() => onStartCall && onStartCall(selectedUser._id, 'video')}
+                  title="Video Call"
+                >
+                  <Video />
+                </button>
+              </>
+            )}
+            {isGroup && (
+              <button
+                className="header-action-btn leave-group"
+                onClick={handleLeaveGroupClick}
+                title="Leave Group"
+              >
+                <LogOut />
+              </button>
+            )}
+            <button
+              className="header-action-btn delete-chat"
+              onClick={handleDeleteClick}
+              title={isGroup ? "Delete Chat History" : "Delete Chat"}
+            >
+              <Trash2 />
+            </button>
+          </div>
         )}
       </div>
 
-      {selectedUser.friendStatus === 'accepted' ? (
+      {canChat ? (
         <>
           {/* Messages Area */}
           <div className="chat-messages" id="chat-messages-area">
@@ -314,7 +372,9 @@ function ChatWindow({
                   animation: 'fadeIn 300ms ease-out',
                 }}
               >
-                <div style={{ fontSize: '2rem', marginBottom: '12px' }}>👋</div>
+                <div style={{ fontSize: '2rem', marginBottom: '12px' }}>
+                  <MessageSquare style={{ width: 40, height: 40, color: 'var(--accent-teal)', opacity: 0.5 }} />
+                </div>
                 <p>
                   No messages yet. Say hello to{' '}
                   <strong style={{ color: 'var(--accent-teal)' }}>
@@ -336,6 +396,41 @@ function ChatWindow({
                 const msg = item.data;
                 const isSent =
                   (msg.sender._id || msg.sender) === currentUser._id;
+
+                if (msg.messageType === 'call') {
+                  const isMissed = !isSent && (msg.content?.toLowerCase().includes('missed') || msg.content?.toLowerCase().includes('declined'));
+                  const isVideo = msg.content?.toLowerCase().includes('video');
+                  const durationMatch = msg.content?.match(/\(([^)]+)\)/);
+                  const duration = durationMatch ? durationMatch[1] : null;
+
+                  return (
+                    <div className="message-call-log-wrapper animate-fade-in" key={item.key}>
+                      <div className={`message-call-log-badge ${isMissed ? 'missed' : ''}`}>
+                        <span className="call-log-icon">
+                          {isMissed ? (
+                            <PhoneMissed className="icon-danger" />
+                          ) : isVideo ? (
+                            <Video className="icon-violet" />
+                          ) : (
+                            <Phone className="icon-teal" />
+                          )}
+                        </span>
+                        <div className="call-log-info">
+                          <span className="call-log-title">
+                            {isSent ? 'Outgoing' : isMissed ? 'Missed' : 'Incoming'}{' '}
+                            {isVideo ? 'Video' : 'Audio'} Call
+                          </span>
+                          {duration && (
+                            <span className="call-log-duration">({duration})</span>
+                          )}
+                        </div>
+                        <span className="call-log-time">
+                          {formatMessageTime(msg.createdAt)}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                }
 
                 return (
                   <div
@@ -366,7 +461,7 @@ function ChatWindow({
                       )}
                       {msg.messageType === 'file' && (
                         <div className="message-file-card">
-                          <span className="file-icon">📄</span>
+                          <span className="file-icon"><File /></span>
                           <div className="file-info">
                             <span className="file-name" title={msg.fileName}>{msg.fileName}</span>
                             <span className="file-size">{(msg.fileSize / 1024).toFixed(1)} KB</span>
@@ -378,7 +473,7 @@ function ChatWindow({
                             rel="noopener noreferrer" 
                             className="file-download-btn"
                           >
-                            ⬇
+                            <Download />
                           </a>
                         </div>
                       )}
@@ -393,7 +488,7 @@ function ChatWindow({
                               msg.isRead ? 'read' : ''
                             }`}
                           >
-                            {msg.isRead ? '✓✓' : '✓'}
+                            {msg.isRead ? <CheckCheck /> : <Check />}
                           </span>
                         )}
                       </div>
@@ -425,12 +520,14 @@ function ChatWindow({
               {fileType === 'video' && (
                 <div className="preview-thumbnail video">
                   <video src={filePreview} muted />
-                  <span className="video-badge">🎥</span>
+                  <span className="video-badge">
+                    <Video style={{ width: 12, height: 12 }} />
+                  </span>
                 </div>
               )}
               {fileType === 'file' && (
                 <div className="preview-thumbnail generic-file">
-                  <span>📄</span>
+                  <File />
                 </div>
               )}
               <div className="preview-details">
@@ -438,7 +535,7 @@ function ChatWindow({
                 <span className="preview-size">{(selectedFile.size / 1024).toFixed(1)} KB</span>
               </div>
               <button className="preview-remove-btn" onClick={handleClearFile} disabled={uploading}>
-                ✕
+                <X />
               </button>
             </div>
             {uploading && (
@@ -457,7 +554,7 @@ function ChatWindow({
             disabled={uploading}
             title="Attach Image or Video"
           >
-            📎
+            <Paperclip />
           </button>
           <input
             type="file"
@@ -493,7 +590,7 @@ function ChatWindow({
             {uploading ? (
               <div className="loading-spinner"></div>
             ) : (
-              '➤'
+              <Send />
             )}
           </button>
         </div>
@@ -502,7 +599,9 @@ function ChatWindow({
       ) : (
         <div className="not-connected-banner">
           <div className="not-connected-card animate-scale-in">
-            <div className="not-connected-icon">👋</div>
+            <div className="not-connected-icon">
+              <UserPlus />
+            </div>
             <div className="not-connected-title">
               {selectedUser.friendStatus === 'pending_received'
                 ? 'Connection Request Received'
@@ -522,12 +621,12 @@ function ChatWindow({
                   className="btn-connect-banner"
                   onClick={() => onSendRequest(selectedUser._id)}
                 >
-                  Connect with {selectedUser.username}
+                  <UserPlus /> Connect with {selectedUser.username}
                 </button>
               )}
               {selectedUser.friendStatus === 'pending_sent' && (
                 <div className="status-pending-banner">
-                  Request Pending
+                  <Clock /> Request Pending
                 </div>
               )}
               {selectedUser.friendStatus === 'pending_received' && (
@@ -536,7 +635,7 @@ function ChatWindow({
                     className="btn-accept-banner"
                     onClick={() => onAcceptRequest(selectedUser.requestId)}
                   >
-                    Accept Request
+                    <Check /> Accept Request
                   </button>
                   <button
                     className="btn-decline-banner"
@@ -556,7 +655,9 @@ function ChatWindow({
         <div className="image-lightbox" onClick={() => setFullScreenImage(null)}>
           <div className="lightbox-content animate-scale-in" onClick={(e) => e.stopPropagation()}>
             <img src={fullScreenImage} alt="Full screen preview" />
-            <button className="lightbox-close" onClick={() => setFullScreenImage(null)}>✕</button>
+            <button className="lightbox-close" onClick={() => setFullScreenImage(null)}>
+              <X />
+            </button>
           </div>
         </div>
       )}

@@ -10,7 +10,12 @@ const messageSchema = new mongoose.Schema(
     receiver: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
-      required: [true, 'Receiver is required'],
+      default: null,
+    },
+    group: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Group',
+      default: null,
     },
     content: {
       type: String,
@@ -20,7 +25,7 @@ const messageSchema = new mongoose.Schema(
     },
     messageType: {
       type: String,
-      enum: ['text', 'image', 'video', 'file'],
+      enum: ['text', 'image', 'video', 'file', 'call'],
       default: 'text',
     },
     fileUrl: {

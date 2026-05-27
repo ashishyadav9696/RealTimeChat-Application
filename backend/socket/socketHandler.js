@@ -3,9 +3,12 @@ const User = require('../models/User');
 const Message = require('../models/Message');
 const Conversation = require('../models/Conversation');
 const FriendRequest = require('../models/FriendRequest');
+const Group = require('../models/Group');
 
 // Map to track online users: userId -> socketId
 const onlineUsers = new Map();
+// Map to track active calls: callerId -> { receiverId, callType, startTime, accepted }
+const activeCalls = new Map();
 
 const socketHandler = (io) => {
   io.onlineUsers = onlineUsers;
@@ -57,43 +60,81 @@ const socketHandler = (io) => {
       try {
         const { receiverId, content } = data;
 
-        // Check friendship status
-        const isConnected = await FriendRequest.findOne({
-          $or: [
-            { sender: userId, receiver: receiverId },
-            { sender: receiverId, receiver: userId }
-          ],
-          status: 'accepted'
-        });
+        // Check if the recipient is a group
+        const group = await Group.findById(receiverId);
+        let message;
+        let populatedMessage;
 
-        if (!isConnected) {
-          return socket.emit('message-error', { message: 'You must be connected to send messages' });
-        }
+        if (group) {
+          // Ensure sender is a member of the group
+          if (!group.members.includes(userId)) {
+            return socket.emit('message-error', { message: 'You must be a member of the group to send messages' });
+          }
 
-        // Create message in DB
-        const message = await Message.create({
-          sender: userId,
-          receiver: receiverId,
-          content,
-        });
+          // Create group message in DB
+          message = await Message.create({
+            sender: userId,
+            group: receiverId,
+            content,
+          });
 
-        // Update conversation
-        const conversation = await Conversation.findOrCreate(
-          userId,
-          receiverId
-        );
-        conversation.lastMessage = message._id;
-        await conversation.save();
+          // Update group's last message
+          group.lastMessage = message._id;
+          await group.save();
 
-        // Populate the message
-        const populatedMessage = await Message.findById(message._id)
-          .populate('sender', 'username avatar')
-          .populate('receiver', 'username avatar');
+          // Populate the message
+          populatedMessage = await Message.findById(message._id)
+            .populate('sender', 'username avatar profilePicture');
 
-        // Send message to receiver if they're online
-        const receiverSocketId = onlineUsers.get(receiverId);
-        if (receiverSocketId) {
-          io.to(receiverSocketId).emit('receive-message', populatedMessage);
+          // Broadcast to other online group members
+          group.members.forEach((memberId) => {
+            if (memberId.toString() !== userId) {
+              const memberSocketId = onlineUsers.get(memberId.toString());
+              if (memberSocketId) {
+                io.to(memberSocketId).emit('receive-message', populatedMessage);
+              }
+            }
+          });
+        } else {
+          // Private message logic
+          // Check friendship status
+          const isConnected = await FriendRequest.findOne({
+            $or: [
+              { sender: userId, receiver: receiverId },
+              { sender: receiverId, receiver: userId }
+            ],
+            status: 'accepted'
+          });
+
+          if (!isConnected) {
+            return socket.emit('message-error', { message: 'You must be connected to send messages' });
+          }
+
+          // Create message in DB
+          message = await Message.create({
+            sender: userId,
+            receiver: receiverId,
+            content,
+          });
+
+          // Update conversation
+          const conversation = await Conversation.findOrCreate(
+            userId,
+            receiverId
+          );
+          conversation.lastMessage = message._id;
+          await conversation.save();
+
+          // Populate the message
+          populatedMessage = await Message.findById(message._id)
+            .populate('sender', 'username avatar profilePicture')
+            .populate('receiver', 'username avatar profilePicture');
+
+          // Send message to receiver if they're online
+          const receiverSocketId = onlineUsers.get(receiverId);
+          if (receiverSocketId) {
+            io.to(receiverSocketId).emit('receive-message', populatedMessage);
+          }
         }
 
         // Send confirmation back to sender
@@ -152,26 +193,210 @@ const socketHandler = (io) => {
       }
     });
 
+    // ===== Call Signaling Events =====
+
+    // Initiate a call
+    socket.on('call-user', (data) => {
+      const { receiverId, callType, callerName, callerAvatar } = data;
+      const receiverSocketId = onlineUsers.get(receiverId);
+      if (receiverSocketId) {
+        // Record call initiation details
+        activeCalls.set(userId, {
+          receiverId,
+          callType: callType || 'audio',
+          accepted: false,
+        });
+
+        io.to(receiverSocketId).emit('incoming-call', {
+          callerId: userId,
+          callerName: callerName || socket.user.username,
+          callerAvatar: callerAvatar || socket.user.avatar,
+          callType: callType || 'audio', // 'audio' or 'video'
+        });
+      } else {
+        socket.emit('call-error', { message: 'User is offline' });
+      }
+    });
+
+    // Accept a call
+    socket.on('call-accepted', (data) => {
+      const { callerId } = data;
+      const callerSocketId = onlineUsers.get(callerId);
+      if (callerSocketId) {
+        const callInfo = activeCalls.get(callerId);
+        if (callInfo) {
+          callInfo.accepted = true;
+          callInfo.startTime = Date.now();
+          activeCalls.set(callerId, callInfo);
+        }
+
+        io.to(callerSocketId).emit('call-accepted', {
+          acceptedBy: userId,
+          acceptedByName: socket.user.username,
+        });
+      }
+    });
+
+    // Reject a call
+    socket.on('call-rejected', async (data) => {
+      const { callerId } = data;
+      const callerSocketId = onlineUsers.get(callerId);
+
+      const callInfo = activeCalls.get(callerId);
+      if (callInfo) {
+        activeCalls.delete(callerId);
+        try {
+          const callTypeCapitalized = callInfo.callType.charAt(0).toUpperCase() + callInfo.callType.slice(1);
+          const message = await Message.create({
+            sender: callerId,
+            receiver: userId,
+            content: `Declined ${callTypeCapitalized} Call`,
+            messageType: 'call',
+          });
+
+          const populatedMessage = await Message.findById(message._id)
+            .populate('sender', 'username avatar profilePicture')
+            .populate('receiver', 'username avatar profilePicture');
+
+          socket.emit('receive-message', populatedMessage);
+          if (callerSocketId) {
+            io.to(callerSocketId).emit('receive-message', populatedMessage);
+          }
+        } catch (err) {
+          console.error('Failed to log call rejection:', err);
+        }
+      }
+
+      if (callerSocketId) {
+        io.to(callerSocketId).emit('call-rejected', {
+          rejectedBy: userId,
+        });
+      }
+    });
+
+    // End a call
+    socket.on('call-ended', async (data) => {
+      const { otherUserId } = data;
+
+      const callerId = activeCalls.has(userId) ? userId : (activeCalls.has(otherUserId) ? otherUserId : null);
+      if (callerId) {
+        const callInfo = activeCalls.get(callerId);
+        activeCalls.delete(callerId);
+
+        if (callInfo && callInfo.accepted && callInfo.startTime) {
+          const durationSec = Math.floor((Date.now() - callInfo.startTime) / 1000);
+          const minutes = Math.floor(durationSec / 60);
+          const seconds = durationSec % 60;
+          const durationStr = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+          const callTypeCapitalized = callInfo.callType.charAt(0).toUpperCase() + callInfo.callType.slice(1);
+
+          try {
+            const message = await Message.create({
+              sender: callerId,
+              receiver: callInfo.receiverId,
+              content: `${callTypeCapitalized} Call (${durationStr})`,
+              messageType: 'call',
+            });
+
+            const populatedMessage = await Message.findById(message._id)
+              .populate('sender', 'username avatar profilePicture')
+              .populate('receiver', 'username avatar profilePicture');
+
+            const callerSocketId = onlineUsers.get(callerId);
+            const receiverSocketId = onlineUsers.get(callInfo.receiverId);
+
+            if (callerSocketId) io.to(callerSocketId).emit('receive-message', populatedMessage);
+            if (receiverSocketId) io.to(receiverSocketId).emit('receive-message', populatedMessage);
+          } catch (err) {
+            console.error('Failed to log call duration:', err);
+          }
+        } else if (callInfo) {
+          // Missed Call (caller hung up before callee answered)
+          try {
+            const callTypeCapitalized = callInfo.callType.charAt(0).toUpperCase() + callInfo.callType.slice(1);
+            const message = await Message.create({
+              sender: callerId,
+              receiver: callInfo.receiverId,
+              content: `Missed ${callTypeCapitalized} Call`,
+              messageType: 'call',
+            });
+
+            const populatedMessage = await Message.findById(message._id)
+              .populate('sender', 'username avatar profilePicture')
+              .populate('receiver', 'username avatar profilePicture');
+
+            const callerSocketId = onlineUsers.get(callerId);
+            const receiverSocketId = onlineUsers.get(callInfo.receiverId);
+
+            if (callerSocketId) io.to(callerSocketId).emit('receive-message', populatedMessage);
+            if (receiverSocketId) io.to(receiverSocketId).emit('receive-message', populatedMessage);
+          } catch (err) {
+            console.error('Failed to log missed call:', err);
+          }
+        }
+      }
+
+      const otherSocketId = onlineUsers.get(otherUserId);
+      if (otherSocketId) {
+        io.to(otherSocketId).emit('call-ended', {
+          endedBy: userId,
+        });
+      }
+    });
+
     // Handle disconnection
     socket.on('disconnect', async () => {
-      console.log(
-        `🔴 User disconnected: ${socket.user.username} (${userId})`
-      );
-
-      // Remove from online users map
+      console.log(`🔴 User disconnected: ${socket.user.username} (${userId})`);
       onlineUsers.delete(userId);
+      await User.findByIdAndUpdate(userId, { isOnline: false, lastSeen: new Date() });
+      io.emit('user-offline', { userId, lastSeen: new Date() });
 
-      // Update user status in DB
-      await User.findByIdAndUpdate(userId, {
-        isOnline: false,
-        lastSeen: new Date(),
-      });
+      // Clean up calls involving this user
+      const callerId = activeCalls.has(userId) ? userId : null;
+      let receiverCallCallerId = null;
+      for (const [cId, callInfo] of activeCalls.entries()) {
+        if (callInfo.receiverId.toString() === userId) {
+          receiverCallCallerId = cId;
+          break;
+        }
+      }
 
-      // Broadcast user offline status
-      io.emit('user-offline', {
-        userId,
-        lastSeen: new Date(),
-      });
+      const activeCallCallerId = callerId || receiverCallCallerId;
+      if (activeCallCallerId) {
+        const callInfo = activeCalls.get(activeCallCallerId);
+        activeCalls.delete(activeCallCallerId);
+
+        if (callInfo && callInfo.accepted && callInfo.startTime) {
+          const durationSec = Math.floor((Date.now() - callInfo.startTime) / 1000);
+          const minutes = Math.floor(durationSec / 60);
+          const seconds = durationSec % 60;
+          const durationStr = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+          const callTypeCapitalized = callInfo.callType.charAt(0).toUpperCase() + callInfo.callType.slice(1);
+
+          try {
+            const message = await Message.create({
+              sender: activeCallCallerId,
+              receiver: callInfo.receiverId,
+              content: `${callTypeCapitalized} Call (${durationStr})`,
+              messageType: 'call',
+            });
+
+            const populatedMessage = await Message.findById(message._id)
+              .populate('sender', 'username avatar profilePicture')
+              .populate('receiver', 'username avatar profilePicture');
+
+            const otherUserSocketId = onlineUsers.get(
+              activeCallCallerId === userId ? callInfo.receiverId : activeCallCallerId
+            );
+            if (otherUserSocketId) {
+              io.to(otherUserSocketId).emit('receive-message', populatedMessage);
+              io.to(otherUserSocketId).emit('call-ended', { endedBy: userId });
+            }
+          } catch (err) {
+            console.error('Failed to log call duration on disconnect:', err);
+          }
+        }
+      }
     });
   });
 };

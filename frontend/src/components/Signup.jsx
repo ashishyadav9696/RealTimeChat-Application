@@ -1,6 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { MessageCircle, Eye, EyeOff, User, Camera } from 'lucide-react';
+import api from '../services/api';
 import toast from 'react-hot-toast';
 
 function Signup() {
@@ -12,8 +14,11 @@ function Signup() {
   const [errors, setErrors] = useState({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [serverError, setServerError] = useState('');
+  const [profilePic, setProfilePic] = useState(null);
+  const [profilePicPreview, setProfilePicPreview] = useState(null);
+  const fileInputRef = useRef(null);
 
-  const { register, isAuthenticated } = useAuth();
+  const { register, isAuthenticated, updateUser } = useAuth();
   const navigate = useNavigate();
 
   // Redirect if already authenticated
@@ -22,6 +27,21 @@ function Signup() {
       navigate('/', { replace: true });
     }
   }, [isAuthenticated, navigate]);
+
+  const handleProfilePicChange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please select an image file');
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('Image must be under 5MB');
+      return;
+    }
+    setProfilePic(file);
+    setProfilePicPreview(URL.createObjectURL(file));
+  };
 
   const validate = () => {
     const newErrors = {};
@@ -67,9 +87,9 @@ function Signup() {
     if (/[0-9]/.test(password)) score++;
     if (/[^A-Za-z0-9]/.test(password)) score++;
 
-    if (score <= 2) return { level: score, text: 'Weak', color: '#EF4444' };
-    if (score <= 3) return { level: score, text: 'Fair', color: '#F59E0B' };
-    if (score <= 4) return { level: score, text: 'Strong', color: '#22C55E' };
+    if (score <= 2) return { level: score, text: 'Weak', color: '#F85149' };
+    if (score <= 3) return { level: score, text: 'Fair', color: '#D29922' };
+    if (score <= 4) return { level: score, text: 'Strong', color: '#3FB950' };
     return { level: score, text: 'Very Strong', color: '#14B8A6' };
   };
 
@@ -87,6 +107,22 @@ function Signup() {
       const result = await register(username, email, password);
 
       if (result.success) {
+        // Upload profile picture if selected
+        if (profilePic) {
+          try {
+            const formData = new FormData();
+            formData.append('profilePicture', profilePic);
+            const response = await api.put('/users/profile', formData, {
+              headers: { 'Content-Type': 'multipart/form-data' },
+            });
+            if (response.data.success) {
+              updateUser(response.data.data);
+            }
+          } catch (err) {
+            console.error('Profile pic upload error:', err);
+            // Non-blocking — account is created
+          }
+        }
         toast.success('Account created! Welcome to ChatSphere');
         navigate('/', { replace: true });
       } else {
@@ -108,7 +144,9 @@ function Signup() {
       <div className="auth-container">
         <div className="auth-card">
           <div className="auth-logo">
-            <div className="auth-logo-icon">💬</div>
+            <div className="auth-logo-icon">
+              <MessageCircle />
+            </div>
             <h1>ChatSphere</h1>
             <p>Create your account to get started</p>
           </div>
@@ -116,6 +154,35 @@ function Signup() {
           {serverError && <div className="auth-error">{serverError}</div>}
 
           <form className="auth-form" onSubmit={handleSubmit} noValidate>
+            {/* Profile Picture Upload */}
+            <div className="profile-upload-container">
+              <div
+                className="profile-upload-wrapper"
+                onClick={() => fileInputRef.current?.click()}
+                role="button"
+                tabIndex={0}
+                aria-label="Upload profile picture"
+              >
+                <div className="profile-upload-preview">
+                  {profilePicPreview ? (
+                    <img src={profilePicPreview} alt="Profile preview" />
+                  ) : (
+                    <User />
+                  )}
+                </div>
+                <div className="profile-upload-badge">
+                  <Camera />
+                </div>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleProfilePicChange}
+                  style={{ display: 'none' }}
+                />
+              </div>
+            </div>
+
             <div className="form-group">
               <label htmlFor="signup-username">Username</label>
               <input
@@ -166,16 +233,15 @@ function Signup() {
                 }}
                 autoComplete="new-password"
               />
-              <span
-                className="input-icon"
-                style={{ cursor: 'pointer', pointerEvents: 'auto' }}
+              <button
+                type="button"
+                className="input-icon-btn"
                 onClick={() => setShowPassword(!showPassword)}
-                role="button"
-                tabIndex={0}
                 aria-label={showPassword ? 'Hide password' : 'Show password'}
+                tabIndex={-1}
               >
-                {showPassword ? '🙈' : '👁️'}
-              </span>
+                {showPassword ? <EyeOff /> : <Eye />}
+              </button>
               {errors.password && (
                 <div className="form-error">{errors.password}</div>
               )}
@@ -193,7 +259,7 @@ function Signup() {
                       flex: 1,
                       height: '3px',
                       borderRadius: '2px',
-                      background: 'rgba(148, 163, 184, 0.1)',
+                      background: 'rgba(139, 148, 158, 0.1)',
                       overflow: 'hidden',
                     }}
                   >
