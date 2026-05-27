@@ -127,6 +127,14 @@ function CallModal({
         />
       )}
 
+      <div className="call-info">
+        <div className="call-name">{userName}</div>
+        <div className="call-status">{getStatusText()}</div>
+        {status === 'connected' && (
+          <div className="call-timer">{formatTimer(timer)}</div>
+        )}
+      </div>
+
       {/* Traditional Call UI Elements (Hidden or overlaid over Video Call) */}
       {(status !== 'connected' || callType === 'audio' || isVideoOff) && (
         <div className="call-avatar-container">
@@ -142,14 +150,6 @@ function CallModal({
           </div>
         </div>
       )}
-
-      <div className="call-info">
-        <div className="call-name">{userName}</div>
-        <div className="call-status">{getStatusText()}</div>
-        {status === 'connected' && (
-          <div className="call-timer">{formatTimer(timer)}</div>
-        )}
-      </div>
 
       <div className="call-controls">
         {status === 'incoming' ? (
