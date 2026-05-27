@@ -195,6 +195,40 @@ const socketHandler = (io) => {
 
     // ===== Call Signaling Events =====
 
+    // WebRTC Signaling Relays
+    socket.on('webrtc-offer', (data) => {
+      const { offer, receiverId } = data;
+      const receiverSocketId = onlineUsers.get(receiverId);
+      if (receiverSocketId) {
+        io.to(receiverSocketId).emit('webrtc-offer', {
+          offer,
+          senderId: userId,
+        });
+      }
+    });
+
+    socket.on('webrtc-answer', (data) => {
+      const { answer, callerId } = data;
+      const callerSocketId = onlineUsers.get(callerId);
+      if (callerSocketId) {
+        io.to(callerSocketId).emit('webrtc-answer', {
+          answer,
+          senderId: userId,
+        });
+      }
+    });
+
+    socket.on('webrtc-candidate', (data) => {
+      const { candidate, targetId } = data;
+      const targetSocketId = onlineUsers.get(targetId);
+      if (targetSocketId) {
+        io.to(targetSocketId).emit('webrtc-candidate', {
+          candidate,
+          senderId: userId,
+        });
+      }
+    });
+
     // Initiate a call
     socket.on('call-user', (data) => {
       const { receiverId, callType, callerName, callerAvatar } = data;

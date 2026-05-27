@@ -48,6 +48,21 @@ function ChatDashboard() {
   const [callState, setCallState] = useState(null);
   // callState: { status: 'outgoing'|'incoming'|'connected'|'ended', callType, userName, userAvatar, profilePicture, userId }
 
+  // WebRTC Stream & Toggle States
+  const [localStream, setLocalStream] = useState(null);
+  const [remoteStream, setRemoteStream] = useState(null);
+  const [isMuted, setIsMuted] = useState(false);
+  const [isVideoOff, setIsVideoOff] = useState(false);
+
+  const peerConnectionRef = useRef(null);
+  const localStreamRef = useRef(null);
+  const callStateRef = useRef(null);
+
+  // Sync callStateRef with callState to avoid stale closures in socket events
+  useEffect(() => {
+    callStateRef.current = callState;
+  }, [callState]);
+
   const selectedUserRef = useRef(null);
 
   // Keep ref in sync with state
@@ -132,6 +147,138 @@ function ChatDashboard() {
     } finally {
       setLoadingMessages(false);
     }
+  }, []);
+
+  // ===== WebRTC Calling Helpers =====
+
+  const stopMediaTracks = useCallback(() => {
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((track) => track.stop());
+      localStreamRef.current = null;
+    }
+    setLocalStream(null);
+    setRemoteStream(null);
+    setIsMuted(false);
+    setIsVideoOff(false);
+    if (peerConnectionRef.current) {
+      peerConnectionRef.current.close();
+      peerConnectionRef.current = null;
+    }
+  }, []);
+
+  const captureLocalMedia = useCallback(async (callType) => {
+    try {
+      const constraints = {
+        audio: true,
+        video: callType === 'video'
+          ? { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }
+          : false,
+      };
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      setLocalStream(stream);
+      localStreamRef.current = stream;
+      return stream;
+    } catch (error) {
+      console.error('Error capturing media device:', error);
+      toast.error('Could not access microphone or camera. Falling back to audio-only.');
+      
+      // Fallback to audio-only
+      if (callType === 'video') {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+          setLocalStream(stream);
+          localStreamRef.current = stream;
+          return stream;
+        } catch (fallbackError) {
+          console.error('Audio fallback failed:', fallbackError);
+        }
+      }
+      return null;
+    }
+  }, []);
+
+  const initPeerConnection = useCallback((targetUserId, stream) => {
+    if (peerConnectionRef.current) {
+      peerConnectionRef.current.close();
+    }
+
+    const pc = new RTCPeerConnection({
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+      ],
+    });
+    peerConnectionRef.current = pc;
+
+    // Add local stream tracks to RTCPeerConnection
+    if (stream) {
+      stream.getTracks().forEach((track) => {
+        pc.addTrack(track, stream);
+      });
+    }
+
+    // ICE candidates handler
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        const socket = getSocket();
+        if (socket) {
+          socket.emit('webrtc-candidate', {
+            candidate: event.candidate,
+            targetId: targetUserId,
+          });
+        }
+      }
+    };
+
+    // Remote stream track handler
+    pc.ontrack = (event) => {
+      if (event.streams && event.streams[0]) {
+        setRemoteStream(event.streams[0]);
+      }
+    };
+
+    return pc;
+  }, []);
+
+  const initiateOffer = async (targetUserId, stream) => {
+    try {
+      const pc = initPeerConnection(targetUserId, stream);
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      const socket = getSocket();
+      if (socket) {
+        socket.emit('webrtc-offer', {
+          offer,
+          receiverId: targetUserId,
+        });
+      }
+    } catch (error) {
+      console.error('Failed to initiate SDP offer:', error);
+    }
+  };
+
+  const toggleMute = useCallback(() => {
+    setIsMuted((prev) => {
+      const newVal = !prev;
+      if (localStreamRef.current) {
+        localStreamRef.current.getAudioTracks().forEach((track) => {
+          track.enabled = !newVal;
+        });
+      }
+      return newVal;
+    });
+  }, []);
+
+  const toggleVideo = useCallback(() => {
+    setIsVideoOff((prev) => {
+      const newVal = !prev;
+      if (localStreamRef.current) {
+        localStreamRef.current.getVideoTracks().forEach((track) => {
+          track.enabled = !newVal;
+        });
+      }
+      return newVal;
+    });
   }, []);
 
   // Initialize socket connection
@@ -324,24 +471,72 @@ function ChatDashboard() {
       });
     });
 
-    socket.on('call-accepted', () => {
+    socket.on('call-accepted', async () => {
       setCallState((prev) => prev ? { ...prev, status: 'connected' } : null);
+      const currentCall = callStateRef.current;
+      if (currentCall) {
+        const stream = await captureLocalMedia(currentCall.callType);
+        await initiateOffer(currentCall.userId, stream);
+      }
     });
 
     socket.on('call-rejected', () => {
       setCallState((prev) => prev ? { ...prev, status: 'ended' } : null);
       toast('Call was declined', { icon: '📞' });
+      stopMediaTracks();
       fetchCallHistory();
     });
 
     socket.on('call-ended', () => {
       setCallState((prev) => prev ? { ...prev, status: 'ended' } : null);
+      stopMediaTracks();
       fetchCallHistory();
     });
 
     socket.on('call-error', ({ message }) => {
       toast.error(message);
       setCallState(null);
+      stopMediaTracks();
+    });
+
+    // ===== WebRTC Signaling Event Receivers =====
+    socket.on('webrtc-offer', async ({ offer, senderId }) => {
+      try {
+        const pc = peerConnectionRef.current;
+        if (pc) {
+          await pc.setRemoteDescription(new RTCSessionDescription(offer));
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          socket.emit('webrtc-answer', {
+            answer,
+            callerId: senderId,
+          });
+        }
+      } catch (err) {
+        console.error('Error handling webrtc-offer:', err);
+      }
+    });
+
+    socket.on('webrtc-answer', async ({ answer }) => {
+      try {
+        const pc = peerConnectionRef.current;
+        if (pc) {
+          await pc.setRemoteDescription(new RTCSessionDescription(answer));
+        }
+      } catch (err) {
+        console.error('Error handling webrtc-answer:', err);
+      }
+    });
+
+    socket.on('webrtc-candidate', async ({ candidate }) => {
+      try {
+        const pc = peerConnectionRef.current;
+        if (pc && candidate) {
+          await pc.addIceCandidate(new RTCIceCandidate(candidate));
+        }
+      } catch (err) {
+        console.error('Error adding Ice Candidate:', err);
+      }
     });
 
     // Fetch initial data
@@ -352,9 +547,10 @@ function ChatDashboard() {
  
     // Cleanup
     return () => {
+      stopMediaTracks();
       disconnectSocket();
     };
-  }, [token, fetchUsers, fetchUnreadCounts, fetchGroups, fetchCallHistory]);
+  }, [token, fetchUsers, fetchUnreadCounts, fetchGroups, fetchCallHistory, stopMediaTracks, captureLocalMedia, initiateOffer]);
 
   // Select a user and load messages
   const handleSelectUser = useCallback(
@@ -557,22 +753,25 @@ function ChatDashboard() {
     });
   }, [users, currentUserData]);
 
-  const handleAcceptCall = useCallback(() => {
+  const handleAcceptCall = useCallback(async () => {
     const socket = getSocket();
     if (socket && callState) {
       socket.emit('call-accepted', { callerId: callState.userId });
       setCallState((prev) => prev ? { ...prev, status: 'connected' } : null);
+      const stream = await captureLocalMedia(callState.callType);
+      initPeerConnection(callState.userId, stream);
     }
-  }, [callState]);
+  }, [callState, captureLocalMedia, initPeerConnection]);
 
   const handleRejectCall = useCallback(() => {
     const socket = getSocket();
     if (socket && callState) {
       socket.emit('call-rejected', { callerId: callState.userId });
-      setCallState(null);
-      fetchCallHistory();
     }
-  }, [callState, fetchCallHistory]);
+    setCallState(null);
+    stopMediaTracks();
+    fetchCallHistory();
+  }, [callState, stopMediaTracks, fetchCallHistory]);
 
   const handleEndCall = useCallback(() => {
     const socket = getSocket();
@@ -580,8 +779,9 @@ function ChatDashboard() {
       socket.emit('call-ended', { otherUserId: callState.userId });
     }
     setCallState(null);
+    stopMediaTracks();
     fetchCallHistory();
-  }, [callState, fetchCallHistory]);
+  }, [callState, stopMediaTracks, fetchCallHistory]);
 
   // Group creation
   const handleCreateGroup = useCallback(async ({ name, members }) => {
@@ -703,6 +903,12 @@ function ChatDashboard() {
           onAccept={handleAcceptCall}
           onReject={handleRejectCall}
           onEnd={handleEndCall}
+          localStream={localStream}
+          remoteStream={remoteStream}
+          isMuted={isMuted}
+          isVideoOff={isVideoOff}
+          onToggleMute={toggleMute}
+          onToggleVideo={toggleVideo}
         />
       )}
 

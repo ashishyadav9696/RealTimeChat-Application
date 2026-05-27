@@ -9,11 +9,22 @@ const getMediaUrl = (url) => {
   return `${cleanBaseUrl}${url}`;
 };
 
-function CallModal({ callState, onAccept, onReject, onEnd }) {
+function CallModal({
+  callState,
+  onAccept,
+  onReject,
+  onEnd,
+  localStream,
+  remoteStream,
+  isMuted,
+  isVideoOff,
+  onToggleMute,
+  onToggleVideo
+}) {
   const [timer, setTimer] = useState(0);
-  const [isMuted, setIsMuted] = useState(false);
-  const [isVideoOff, setIsVideoOff] = useState(false);
   const timerRef = useRef(null);
+  const localVideoRef = useRef(null);
+  const remoteVideoRef = useRef(null);
 
   // Call states: 'outgoing', 'incoming', 'connected', 'ended'
   const { status, callType, userName, userAvatar, profilePicture } = callState;
@@ -40,6 +51,19 @@ function CallModal({ callState, onAccept, onReject, onEnd }) {
       return () => clearTimeout(timeout);
     }
   }, [status, onEnd]);
+
+  // Bind streams to video tags
+  useEffect(() => {
+    if (localVideoRef.current && localStream) {
+      localVideoRef.current.srcObject = localStream;
+    }
+  }, [localStream]);
+
+  useEffect(() => {
+    if (remoteVideoRef.current && remoteStream) {
+      remoteVideoRef.current.srcObject = remoteStream;
+    }
+  }, [remoteStream]);
 
   const formatTimer = (seconds) => {
     const mins = Math.floor(seconds / 60).toString().padStart(2, '0');
@@ -81,18 +105,43 @@ function CallModal({ callState, onAccept, onReject, onEnd }) {
 
   return (
     <div className="call-overlay">
-      <div className="call-avatar-container">
-        {(status === 'outgoing' || status === 'incoming') && (
-          <>
-            <div className="call-ring"></div>
-            <div className="call-ring"></div>
-            <div className="call-ring"></div>
-          </>
-        )}
-        <div className="call-avatar">
-          {avatarContent}
+      {/* WebRTC Video Feeds */}
+      {status === 'connected' && remoteStream && (
+        <video
+          ref={remoteVideoRef}
+          autoPlay
+          playsInline
+          className={callType === 'video' ? 'remote-video' : 'remote-audio-only'}
+          style={callType === 'audio' ? { display: 'none' } : {}}
+        />
+      )}
+
+      {status === 'connected' && localStream && (
+        <video
+          ref={localVideoRef}
+          autoPlay
+          playsInline
+          muted
+          className={callType === 'video' ? 'local-video-preview' : 'local-audio-only'}
+          style={(callType === 'audio' || isVideoOff) ? { display: 'none' } : {}}
+        />
+      )}
+
+      {/* Traditional Call UI Elements (Hidden or overlaid over Video Call) */}
+      {(status !== 'connected' || callType === 'audio' || isVideoOff) && (
+        <div className="call-avatar-container">
+          {(status === 'outgoing' || status === 'incoming') && (
+            <>
+              <div className="call-ring"></div>
+              <div className="call-ring"></div>
+              <div className="call-ring"></div>
+            </>
+          )}
+          <div className="call-avatar">
+            {avatarContent}
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="call-info">
         <div className="call-name">{userName}</div>
@@ -124,7 +173,7 @@ function CallModal({ callState, onAccept, onReject, onEnd }) {
           <>
             <button
               className={`call-control-btn ${isMuted ? 'active' : ''}`}
-              onClick={() => setIsMuted(!isMuted)}
+              onClick={onToggleMute}
               title={isMuted ? 'Unmute' : 'Mute'}
             >
               {isMuted ? <MicOff /> : <Mic />}
@@ -132,7 +181,7 @@ function CallModal({ callState, onAccept, onReject, onEnd }) {
             {callType === 'video' && (
               <button
                 className={`call-control-btn ${isVideoOff ? 'active' : ''}`}
-                onClick={() => setIsVideoOff(!isVideoOff)}
+                onClick={onToggleVideo}
                 title={isVideoOff ? 'Turn on camera' : 'Turn off camera'}
               >
                 {isVideoOff ? <VideoOff /> : <Video />}
