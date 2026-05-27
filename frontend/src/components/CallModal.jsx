@@ -57,10 +57,26 @@ function CallModal({ callState, onAccept, onReject, onEnd }) {
     }
   };
 
-  const avatarContent = profilePicture ? (
-    <img src={getMediaUrl(profilePicture)} alt={userName} />
-  ) : (
-    userAvatar || userName?.substring(0, 2).toUpperCase()
+  const avatarContent = (
+    <>
+      {profilePicture && (
+        <img 
+          src={getMediaUrl(profilePicture)} 
+          alt={userName} 
+          onError={(e) => {
+            e.target.style.display = 'none';
+            const fallback = e.target.parentElement.querySelector('.avatar-fallback');
+            if (fallback) fallback.style.display = 'inline-block';
+          }}
+        />
+      )}
+      <span 
+        className="avatar-fallback" 
+        style={{ display: profilePicture ? 'none' : 'inline-block' }}
+      >
+        {userAvatar || userName?.substring(0, 2).toUpperCase()}
+      </span>
+    </>
   );
 
   return (

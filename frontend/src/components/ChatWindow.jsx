@@ -261,16 +261,45 @@ function ChatWindow({
 
         <div className={`user-avatar ${!isGroup && isOnline ? 'online' : ''}`}>
           {isGroup ? (
-            selectedUser.avatar ? (
-              <img src={getMediaUrl(selectedUser.avatar)} alt={selectedUser.name} />
-            ) : (
-              selectedUser.name.substring(0, 2).toUpperCase()
-            )
-          ) : selectedUser.profilePicture ? (
-            <img src={getMediaUrl(selectedUser.profilePicture)} alt={selectedUser.username} />
+            <>
+              {selectedUser.avatar && (
+                <img 
+                  src={getMediaUrl(selectedUser.avatar)} 
+                  alt={selectedUser.name} 
+                  onError={(e) => {
+                    e.target.style.display = 'none';
+                    const fallback = e.target.parentElement.querySelector('.avatar-fallback');
+                    if (fallback) fallback.style.display = 'inline-block';
+                  }}
+                />
+              )}
+              <span 
+                className="avatar-fallback" 
+                style={{ display: selectedUser.avatar ? 'none' : 'inline-block' }}
+              >
+                {selectedUser.name.substring(0, 2).toUpperCase()}
+              </span>
+            </>
           ) : (
-            selectedUser.avatar ||
-            selectedUser.username.substring(0, 2).toUpperCase()
+            <>
+              {selectedUser.profilePicture && (
+                <img 
+                  src={getMediaUrl(selectedUser.profilePicture)} 
+                  alt={selectedUser.username} 
+                  onError={(e) => {
+                    e.target.style.display = 'none';
+                    const fallback = e.target.parentElement.querySelector('.avatar-fallback');
+                    if (fallback) fallback.style.display = 'inline-block';
+                  }}
+                />
+              )}
+              <span 
+                className="avatar-fallback" 
+                style={{ display: selectedUser.profilePicture ? 'none' : 'inline-block' }}
+              >
+                {selectedUser.avatar || selectedUser.username.substring(0, 2).toUpperCase()}
+              </span>
+            </>
           )}
           {!isGroup && (
             <span

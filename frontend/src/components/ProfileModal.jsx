@@ -72,11 +72,23 @@ function ProfileModal({ isOpen, onClose, currentUser, onUpdateUser }) {
         <div className="modal-body" style={{ alignItems: 'center' }}>
           <div className="profile-modal-avatar">
             <div className="user-avatar online">
-              {currentUser.profilePicture ? (
-                <img src={getMediaUrl(currentUser.profilePicture)} alt={currentUser.username} />
-              ) : (
-                currentUser.avatar || currentUser.username?.substring(0, 2).toUpperCase()
+              {currentUser.profilePicture && (
+                <img 
+                  src={getMediaUrl(currentUser.profilePicture)} 
+                  alt={currentUser.username} 
+                  onError={(e) => {
+                    e.target.style.display = 'none';
+                    const fallback = e.target.parentElement.querySelector('.avatar-fallback');
+                    if (fallback) fallback.style.display = 'inline-block';
+                  }}
+                />
               )}
+              <span 
+                className="avatar-fallback" 
+                style={{ display: currentUser.profilePicture ? 'none' : 'inline-block' }}
+              >
+                {currentUser.avatar || currentUser.username?.substring(0, 2).toUpperCase()}
+              </span>
               <span className="user-status-dot online"></span>
             </div>
             <div

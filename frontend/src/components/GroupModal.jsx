@@ -132,11 +132,23 @@ function GroupModal({ isOpen, onClose, users, onCreateGroup }) {
                       {isSelected && <Check />}
                     </div>
                     <div className="user-avatar" style={{ width: '32px', height: '32px', minWidth: '32px', fontSize: '0.7rem' }}>
-                      {user.profilePicture ? (
-                        <img src={getMediaUrl(user.profilePicture)} alt={user.username} />
-                      ) : (
-                        user.avatar || user.username.substring(0, 2).toUpperCase()
+                      {user.profilePicture && (
+                        <img 
+                          src={getMediaUrl(user.profilePicture)} 
+                          alt={user.username} 
+                          onError={(e) => {
+                            e.target.style.display = 'none';
+                            const fallback = e.target.parentElement.querySelector('.avatar-fallback');
+                            if (fallback) fallback.style.display = 'inline-block';
+                          }}
+                        />
                       )}
+                      <span 
+                        className="avatar-fallback" 
+                        style={{ display: user.profilePicture ? 'none' : 'inline-block' }}
+                      >
+                        {user.avatar || user.username.substring(0, 2).toUpperCase()}
+                      </span>
                     </div>
                     <span className="member-name">{user.username}</span>
                   </div>

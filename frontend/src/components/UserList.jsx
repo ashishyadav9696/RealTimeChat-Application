@@ -213,11 +213,23 @@ function UserList({
                     id={`call-item-${call._id}`}
                   >
                     <div className="user-avatar">
-                      {otherUser.profilePicture ? (
-                        <img src={getMediaUrl(otherUser.profilePicture)} alt={otherUser.username} />
-                      ) : (
-                        otherUser.avatar || otherUser.username.substring(0, 2).toUpperCase()
+                      {otherUser.profilePicture && (
+                        <img 
+                          src={getMediaUrl(otherUser.profilePicture)} 
+                          alt={otherUser.username} 
+                          onError={(e) => {
+                            e.target.style.display = 'none';
+                            const fallback = e.target.parentElement.querySelector('.avatar-fallback');
+                            if (fallback) fallback.style.display = 'inline-block';
+                          }}
+                        />
                       )}
+                      <span 
+                        className="avatar-fallback" 
+                        style={{ display: otherUser.profilePicture ? 'none' : 'inline-block' }}
+                      >
+                        {otherUser.avatar || otherUser.username.substring(0, 2).toUpperCase()}
+                      </span>
                     </div>
                     <div className="user-item-info">
                       <span className="user-item-name">{otherUser.username}</span>
@@ -274,11 +286,23 @@ function UserList({
                 id={`user-item-${user._id}`}
               >
                 <div className={`user-avatar ${isOnline ? 'online' : ''}`}>
-                  {user.profilePicture ? (
-                    <img src={getMediaUrl(user.profilePicture)} alt={user.username} />
-                  ) : (
-                    user.avatar || user.username.substring(0, 2).toUpperCase()
+                  {user.profilePicture && (
+                    <img 
+                      src={getMediaUrl(user.profilePicture)} 
+                      alt={user.username} 
+                      onError={(e) => {
+                        e.target.style.display = 'none';
+                        const fallback = e.target.parentElement.querySelector('.avatar-fallback');
+                        if (fallback) fallback.style.display = 'inline-block';
+                      }}
+                    />
                   )}
+                  <span 
+                    className="avatar-fallback" 
+                    style={{ display: user.profilePicture ? 'none' : 'inline-block' }}
+                  >
+                    {user.avatar || user.username.substring(0, 2).toUpperCase()}
+                  </span>
                   <span
                     className={`user-status-dot ${isOnline ? 'online' : ''}`}
                   ></span>
@@ -339,12 +363,23 @@ function UserList({
       {/* Current user profile */}
       <div className="sidebar-profile" onClick={onOpenProfile}>
         <div className="user-avatar online">
-          {currentUser?.profilePicture ? (
-            <img src={getMediaUrl(currentUser.profilePicture)} alt={currentUser?.username} />
-          ) : (
-            currentUser?.avatar ||
-            currentUser?.username?.substring(0, 2).toUpperCase()
+          {currentUser?.profilePicture && (
+            <img 
+              src={getMediaUrl(currentUser.profilePicture)} 
+              alt={currentUser?.username} 
+              onError={(e) => {
+                e.target.style.display = 'none';
+                const fallback = e.target.parentElement.querySelector('.avatar-fallback');
+                if (fallback) fallback.style.display = 'inline-block';
+              }}
+            />
           )}
+          <span 
+            className="avatar-fallback" 
+            style={{ display: currentUser?.profilePicture ? 'none' : 'inline-block' }}
+          >
+            {currentUser?.avatar || currentUser?.username?.substring(0, 2).toUpperCase()}
+          </span>
           <span className="user-status-dot online"></span>
         </div>
         <div className="sidebar-profile-info">
