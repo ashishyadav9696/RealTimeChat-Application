@@ -57,6 +57,7 @@ function ChatDashboard() {
   const peerConnectionRef = useRef(null);
   const localStreamRef = useRef(null);
   const callStateRef = useRef(null);
+  const remoteAudioRef = useRef(null);
 
   // Sync callStateRef with callState to avoid stale closures in socket events
   useEffect(() => {
@@ -233,14 +234,19 @@ function ChatDashboard() {
     // Remote stream track handler
     pc.ontrack = (event) => {
       if (event.streams && event.streams[0]) {
-        setRemoteStream(event.streams[0]);
+        const remoteMediaStream = event.streams[0];
+        setRemoteStream(remoteMediaStream);
+        // For audio calls, immediately bind to the hidden audio element
+        if (remoteAudioRef.current) {
+          remoteAudioRef.current.srcObject = remoteMediaStream;
+        }
       }
     };
 
     return pc;
   }, []);
 
-  const initiateOffer = async (targetUserId, stream) => {
+  const initiateOffer = useCallback(async (targetUserId, stream) => {
     try {
       const pc = initPeerConnection(targetUserId, stream);
       const offer = await pc.createOffer();
@@ -255,7 +261,7 @@ function ChatDashboard() {
     } catch (error) {
       console.error('Failed to initiate SDP offer:', error);
     }
-  };
+  }, [initPeerConnection]);
 
   const toggleMute = useCallback(() => {
     setIsMuted((prev) => {
@@ -340,10 +346,26 @@ function ChatDashboard() {
         fetchCallHistory();
       }
       const currentSelected = selectedUserRef.current;
-      const senderId = message.sender._id || message.sender;
+      const senderId = (message.sender?._id || message.sender)?.toString();
 
-      if (currentSelected && senderId === currentSelected._id) {
-        // Message is from the currently selected user — add to messages
+      // Skip messages sent by the current user
+      // (e.g. call-log messages are echoed back to the caller causing phantom unreads)
+      if (senderId === user?._id?.toString()) return;
+
+      // Determine if this is a group message
+      const isGroupMessage = !!(message.group);
+      const messageGroupId = (message.group?._id || message.group)?.toString();
+
+      // Check if the message belongs to the currently open conversation
+      const isCurrentConversation = currentSelected && (
+        // Private message: sender matches selected user
+        (!isGroupMessage && senderId === currentSelected._id?.toString()) ||
+        // Group message: group ID matches selected group
+        (isGroupMessage && messageGroupId === currentSelected._id?.toString())
+      );
+
+      if (isCurrentConversation) {
+        // Message is in the currently open chat — add directly
         setMessages((prev) => [...prev, message]);
 
         // Mark as read
@@ -352,27 +374,30 @@ function ChatDashboard() {
           senderId: senderId,
         });
       } else {
-        // Message from another user — increment unread count
+        // Increment unread count — use groupId for group messages, senderId for private
+        const unreadKey = isGroupMessage ? messageGroupId : senderId;
         setUnreadCounts((prev) => ({
           ...prev,
-          [senderId]: (prev[senderId] || 0) + 1,
+          [unreadKey]: (prev[unreadKey] || 0) + 1,
         }));
 
-        // Show toast notification
-        const senderName = message.sender.username || 'Someone';
-        const displayContent = message.messageType === 'text'
-          ? message.content
-          : `Sent a ${message.messageType || 'file'}${message.content ? `: ${message.content}` : ''}`;
+        // Show toast (skip silent call-log messages)
+        if (message.messageType !== 'call') {
+          const senderName = message.sender?.username || 'Someone';
+          const displayContent = message.messageType === 'text'
+            ? message.content
+            : `Sent a ${message.messageType || 'file'}${message.content ? `: ${message.content}` : ''}`;
 
-        toast(
-          `${senderName}: ${displayContent.substring(0, 50)}${
-            displayContent.length > 50 ? '...' : ''
-          }`,
-          {
-            icon: message.messageType === 'image' ? '📷' : message.messageType === 'video' ? '🎥' : '💬',
-            duration: 4000,
-          }
-        );
+          toast(
+            `${senderName}: ${displayContent.substring(0, 50)}${
+              displayContent.length > 50 ? '...' : ''
+            }`,
+            {
+              icon: message.messageType === 'image' ? '📷' : message.messageType === 'video' ? '🎥' : '💬',
+              duration: 4000,
+            }
+          );
+        }
       }
     });
 
@@ -472,11 +497,14 @@ function ChatDashboard() {
     });
 
     socket.on('call-accepted', async () => {
-      setCallState((prev) => prev ? { ...prev, status: 'connected' } : null);
+      // Use ref to avoid stale closure — callStateRef is always current
       const currentCall = callStateRef.current;
+      setCallState((prev) => prev ? { ...prev, status: 'connected' } : null);
       if (currentCall) {
         const stream = await captureLocalMedia(currentCall.callType);
-        await initiateOffer(currentCall.userId, stream);
+        if (stream) {
+          await initiateOffer(currentCall.userId, stream);
+        }
       }
     });
 
@@ -502,7 +530,13 @@ function ChatDashboard() {
     // ===== WebRTC Signaling Event Receivers =====
     socket.on('webrtc-offer', async ({ offer, senderId }) => {
       try {
-        const pc = peerConnectionRef.current;
+        // The callee's PC is initialized in handleAcceptCall -> initPeerConnection
+        // Wait briefly if PC is not yet ready (race between call-accepted and webrtc-offer)
+        let pc = peerConnectionRef.current;
+        if (!pc) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          pc = peerConnectionRef.current;
+        }
         if (pc) {
           await pc.setRemoteDescription(new RTCSessionDescription(offer));
           const answer = await pc.createAnswer();
@@ -511,6 +545,8 @@ function ChatDashboard() {
             answer,
             callerId: senderId,
           });
+        } else {
+          console.error('No peer connection available to handle webrtc-offer');
         }
       } catch (err) {
         console.error('Error handling webrtc-offer:', err);
@@ -550,7 +586,7 @@ function ChatDashboard() {
       stopMediaTracks();
       disconnectSocket();
     };
-  }, [token, fetchUsers, fetchUnreadCounts, fetchGroups, fetchCallHistory, stopMediaTracks, captureLocalMedia, initiateOffer]);
+  }, [token, fetchUsers, fetchUnreadCounts, fetchGroups, fetchCallHistory, stopMediaTracks, captureLocalMedia, initiateOffer]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Select a user and load messages
   const handleSelectUser = useCallback(
@@ -896,6 +932,9 @@ function ChatDashboard() {
         onLeaveGroup={handleLeaveGroup}
       />
 
+      {/* Hidden audio element for remote audio-only call playback */}
+      <audio ref={remoteAudioRef} autoPlay playsInline style={{ display: 'none' }} />
+
       {/* Call Modal */}
       {callState && (
         <CallModal
@@ -905,6 +944,7 @@ function ChatDashboard() {
           onEnd={handleEndCall}
           localStream={localStream}
           remoteStream={remoteStream}
+          remoteAudioRef={remoteAudioRef}
           isMuted={isMuted}
           isVideoOff={isVideoOff}
           onToggleMute={toggleMute}

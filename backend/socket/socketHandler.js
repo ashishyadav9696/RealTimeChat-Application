@@ -66,8 +66,8 @@ const socketHandler = (io) => {
         let populatedMessage;
 
         if (group) {
-          // Ensure sender is a member of the group
-          if (!group.members.includes(userId)) {
+          // Ensure sender is a member of the group (compare as strings to avoid ObjectId mismatch)
+          if (!group.members.some((m) => m.toString() === userId)) {
             return socket.emit('message-error', { message: 'You must be a member of the group to send messages' });
           }
 

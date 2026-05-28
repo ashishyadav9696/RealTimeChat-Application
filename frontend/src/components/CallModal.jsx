@@ -1,13 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Phone, PhoneOff, Mic, MicOff, Video, VideoOff, Volume2 } from 'lucide-react';
+import Avatar from './Avatar';
 
-const getMediaUrl = (url) => {
-  if (!url) return '';
-  if (url.startsWith('http://') || url.startsWith('https://')) return url;
-  const baseUrl = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000';
-  const cleanBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
-  return `${cleanBaseUrl}${url}`;
-};
 
 function CallModal({
   callState,
@@ -16,6 +10,7 @@ function CallModal({
   onEnd,
   localStream,
   remoteStream,
+  remoteAudioRef,
   isMuted,
   isVideoOff,
   onToggleMute,
@@ -52,7 +47,7 @@ function CallModal({
     }
   }, [status, onEnd]);
 
-  // Bind streams to video tags
+  // Bind streams to video/audio elements
   useEffect(() => {
     if (localVideoRef.current && localStream) {
       localVideoRef.current.srcObject = localStream;
@@ -60,10 +55,18 @@ function CallModal({
   }, [localStream]);
 
   useEffect(() => {
-    if (remoteVideoRef.current && remoteStream) {
-      remoteVideoRef.current.srcObject = remoteStream;
+    if (remoteStream) {
+      if (callType === 'video' && remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = remoteStream;
+      } else if (callType === 'audio' && remoteAudioRef?.current) {
+        // For audio calls, bind to the dedicated hidden audio element
+        remoteAudioRef.current.srcObject = remoteStream;
+      } else if (remoteVideoRef.current) {
+        // Fallback: bind to video element anyway (audio still plays)
+        remoteVideoRef.current.srcObject = remoteStream;
+      }
     }
-  }, [remoteStream]);
+  }, [remoteStream, callType, remoteAudioRef]);
 
   const formatTimer = (seconds) => {
     const mins = Math.floor(seconds / 60).toString().padStart(2, '0');
@@ -81,49 +84,36 @@ function CallModal({
     }
   };
 
-  const avatarContent = (
-    <>
-      {profilePicture && (
-        <img 
-          src={getMediaUrl(profilePicture)} 
-          alt={userName} 
-          onError={(e) => {
-            e.target.style.display = 'none';
-            const fallback = e.target.parentElement.querySelector('.avatar-fallback');
-            if (fallback) fallback.style.display = 'inline-block';
-          }}
-        />
-      )}
-      <span 
-        className="avatar-fallback" 
-        style={{ display: profilePicture ? 'none' : 'inline-block' }}
-      >
-        {userAvatar || userName?.substring(0, 2).toUpperCase()}
-      </span>
-    </>
-  );
 
   return (
     <div className="call-overlay">
       {/* WebRTC Video Feeds */}
-      {status === 'connected' && remoteStream && (
+      {status === 'connected' && remoteStream && callType === 'video' && (
         <video
           ref={remoteVideoRef}
           autoPlay
           playsInline
-          className={callType === 'video' ? 'remote-video' : 'remote-audio-only'}
-          style={callType === 'audio' ? { display: 'none' } : {}}
+          className="remote-video"
         />
       )}
 
-      {status === 'connected' && localStream && (
+      {/* Fallback: if audio call but no remoteAudioRef, still render hidden video for audio */}
+      {status === 'connected' && remoteStream && callType === 'audio' && !remoteAudioRef && (
+        <video
+          ref={remoteVideoRef}
+          autoPlay
+          playsInline
+          style={{ display: 'none' }}
+        />
+      )}
+
+      {status === 'connected' && localStream && callType === 'video' && !isVideoOff && (
         <video
           ref={localVideoRef}
           autoPlay
           playsInline
           muted
-          className={callType === 'video' ? 'local-video-preview' : 'local-audio-only'}
-          style={(callType === 'audio' || isVideoOff) ? { display: 'none' } : {}}
+          className="local-video-preview"
         />
       )}
 
@@ -146,7 +136,11 @@ function CallModal({
             </>
           )}
           <div className="call-avatar">
-            {avatarContent}
+            <Avatar
+              profilePicture={profilePicture}
+              avatar={userAvatar}
+              username={userName}
+            />
           </div>
         </div>
       )}

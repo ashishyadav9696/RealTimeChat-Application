@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { ArrowLeft, Trash2, Paperclip, Send, X, File, Download, Check, CheckCheck, Phone, Video, MessageSquare, UserPlus, Clock, PhoneMissed, LogOut } from 'lucide-react';
 import TypingIndicator from './TypingIndicator';
+import Avatar from './Avatar';
 
 const getMediaUrl = (url) => {
   if (!url) return '';
@@ -259,54 +260,12 @@ function ChatWindow({
           <ArrowLeft />
         </button>
 
-        <div className={`user-avatar ${!isGroup && isOnline ? 'online' : ''}`}>
-          {isGroup ? (
-            <>
-              {selectedUser.avatar && (
-                <img 
-                  src={getMediaUrl(selectedUser.avatar)} 
-                  alt={selectedUser.name} 
-                  onError={(e) => {
-                    e.target.style.display = 'none';
-                    const fallback = e.target.parentElement.querySelector('.avatar-fallback');
-                    if (fallback) fallback.style.display = 'inline-block';
-                  }}
-                />
-              )}
-              <span 
-                className="avatar-fallback" 
-                style={{ display: selectedUser.avatar ? 'none' : 'inline-block' }}
-              >
-                {selectedUser.name.substring(0, 2).toUpperCase()}
-              </span>
-            </>
-          ) : (
-            <>
-              {selectedUser.profilePicture && (
-                <img 
-                  src={getMediaUrl(selectedUser.profilePicture)} 
-                  alt={selectedUser.username} 
-                  onError={(e) => {
-                    e.target.style.display = 'none';
-                    const fallback = e.target.parentElement.querySelector('.avatar-fallback');
-                    if (fallback) fallback.style.display = 'inline-block';
-                  }}
-                />
-              )}
-              <span 
-                className="avatar-fallback" 
-                style={{ display: selectedUser.profilePicture ? 'none' : 'inline-block' }}
-              >
-                {selectedUser.avatar || selectedUser.username.substring(0, 2).toUpperCase()}
-              </span>
-            </>
-          )}
-          {!isGroup && (
-            <span
-              className={`user-status-dot ${isOnline ? 'online' : ''}`}
-            ></span>
-          )}
-        </div>
+        <Avatar
+          profilePicture={isGroup ? selectedUser.avatar : selectedUser.profilePicture}
+          avatar={isGroup ? selectedUser.name.substring(0, 2).toUpperCase() : selectedUser.avatar}
+          username={isGroup ? selectedUser.name : selectedUser.username}
+          isOnline={!isGroup && isOnline}
+        />
 
         <div className="chat-header-info">
           <div className="chat-header-name">{isGroup ? selectedUser.name : selectedUser.username}</div>

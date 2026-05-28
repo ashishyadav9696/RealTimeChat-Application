@@ -1,13 +1,7 @@
 import { useState, useMemo } from 'react';
 import { Search, Check, X, UserPlus, MessageCircle, Users, BellDot, Phone, PhoneMissed, ArrowUpRight, ArrowDownLeft, Video } from 'lucide-react';
+import Avatar from './Avatar';
 
-const getMediaUrl = (url) => {
-  if (!url) return '';
-  if (url.startsWith('http://') || url.startsWith('https://')) return url;
-  const baseUrl = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000';
-  const cleanBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
-  return `${cleanBaseUrl}${url}`;
-};
 
 function UserList({
   users,
@@ -56,6 +50,14 @@ function UserList({
 
     return list;
   }, [users, searchQuery, onlineUsers, activeTab, unreadCounts]);
+
+  // Groups with unread messages — used in Unreads tab
+  const groupsWithUnread = useMemo(() => {
+    return groups.filter((g) => {
+      const matchesSearch = !searchQuery || g.name.toLowerCase().includes(searchQuery.toLowerCase());
+      return matchesSearch && (unreadCounts[g._id] || 0) > 0;
+    });
+  }, [groups, searchQuery, unreadCounts]);
 
   const onlineCount = users.filter((u) => onlineUsers.includes(u._id)).length;
 
@@ -155,13 +157,11 @@ function UserList({
                   tabIndex={0}
                   id={`group-item-${group._id}`}
                 >
-                  <div className="user-avatar">
-                    {group.avatar ? (
-                      <img src={getMediaUrl(group.avatar)} alt={group.name} />
-                    ) : (
-                      group.name.substring(0, 2).toUpperCase()
-                    )}
-                  </div>
+                  <Avatar
+                    profilePicture={group.avatar}
+                    username={group.name}
+                    className=""
+                  />
                   <div className="user-item-info">
                     <span className="user-item-name">{group.name}</span>
                     <span className="user-item-preview">
@@ -212,25 +212,11 @@ function UserList({
                     tabIndex={0}
                     id={`call-item-${call._id}`}
                   >
-                    <div className="user-avatar">
-                      {otherUser.profilePicture && (
-                        <img 
-                          src={getMediaUrl(otherUser.profilePicture)} 
-                          alt={otherUser.username} 
-                          onError={(e) => {
-                            e.target.style.display = 'none';
-                            const fallback = e.target.parentElement.querySelector('.avatar-fallback');
-                            if (fallback) fallback.style.display = 'inline-block';
-                          }}
-                        />
-                      )}
-                      <span 
-                        className="avatar-fallback" 
-                        style={{ display: otherUser.profilePicture ? 'none' : 'inline-block' }}
-                      >
-                        {otherUser.avatar || otherUser.username.substring(0, 2).toUpperCase()}
-                      </span>
-                    </div>
+                    <Avatar
+                      profilePicture={otherUser.profilePicture}
+                      avatar={otherUser.avatar}
+                      username={otherUser.username}
+                    />
                     <div className="user-item-info">
                       <span className="user-item-name">{otherUser.username}</span>
                       <div className="call-item-preview">
@@ -253,6 +239,78 @@ function UserList({
                   </div>
                 );
               })
+            );
+          })()
+        ) : activeTab === 'unreads' ? (
+          // Unreads tab: show both users and groups with unread messages
+          (() => {
+            const hasAny = filteredUsers.length > 0 || groupsWithUnread.length > 0;
+            if (!hasAny) {
+              return (
+                <div style={{ textAlign: 'center', padding: '32px 16px', color: 'var(--text-muted)', fontSize: 'var(--font-sm)' }}>
+                  {searchQuery ? 'No unread conversations found' : 'No unread messages'}
+                </div>
+              );
+            }
+            return (
+              <>
+                {/* Group unreads */}
+                {groupsWithUnread.map((group) => {
+                  const isActive = selectedUser?._id === group._id;
+                  const unread = unreadCounts[group._id] || 0;
+                  return (
+                    <div
+                      key={group._id}
+                      className={`user-item ${isActive ? 'active' : ''}`}
+                      onClick={() => onSelectUser(group)}
+                      role="button"
+                      tabIndex={0}
+                      id={`unread-group-item-${group._id}`}
+                    >
+                      <Avatar profilePicture={group.avatar} username={group.name} />
+                      <div className="user-item-info">
+                        <span className="user-item-name">{group.name}</span>
+                        <span className="user-item-preview">{group.members?.length || 0} members</span>
+                      </div>
+                      {unread > 0 && (
+                        <div className="unread-badge">{unread > 99 ? '99+' : unread}</div>
+                      )}
+                    </div>
+                  );
+                })}
+                {/* User unreads */}
+                {filteredUsers.map((user) => {
+                  const isOnline = onlineUsers.includes(user._id);
+                  const isActive = selectedUser?._id === user._id;
+                  const unread = unreadCounts[user._id] || 0;
+                  return (
+                    <div
+                      key={user._id}
+                      className={`user-item ${isActive ? 'active' : ''}`}
+                      onClick={() => onSelectUser(user)}
+                      role="button"
+                      tabIndex={0}
+                      id={`unread-user-item-${user._id}`}
+                    >
+                      <Avatar
+                        profilePicture={user.profilePicture}
+                        avatar={user.avatar}
+                        username={user.username}
+                        isOnline={isOnline}
+                      />
+                      <div className="user-item-info">
+                        <span className="user-item-name">{user.username}</span>
+                        <span className="user-item-preview">
+                          {isOnline ? 'Online' : formatLastSeen(user.lastSeen)}
+                        </span>
+                      </div>
+                      {unread > 0 && (
+                        <div className="unread-badge">{unread > 99 ? '99+' : unread}</div>
+                      )}
+                    </div>
+                  );
+                })}
+              </>
             );
           })()
         ) : filteredUsers.length === 0 ? (
@@ -285,28 +343,12 @@ function UserList({
                 tabIndex={0}
                 id={`user-item-${user._id}`}
               >
-                <div className={`user-avatar ${isOnline ? 'online' : ''}`}>
-                  {user.profilePicture && (
-                    <img 
-                      src={getMediaUrl(user.profilePicture)} 
-                      alt={user.username} 
-                      onError={(e) => {
-                        e.target.style.display = 'none';
-                        const fallback = e.target.parentElement.querySelector('.avatar-fallback');
-                        if (fallback) fallback.style.display = 'inline-block';
-                      }}
-                    />
-                  )}
-                  <span 
-                    className="avatar-fallback" 
-                    style={{ display: user.profilePicture ? 'none' : 'inline-block' }}
-                  >
-                    {user.avatar || user.username.substring(0, 2).toUpperCase()}
-                  </span>
-                  <span
-                    className={`user-status-dot ${isOnline ? 'online' : ''}`}
-                  ></span>
-                </div>
+                <Avatar
+                    profilePicture={user.profilePicture}
+                    avatar={user.avatar}
+                    username={user.username}
+                    isOnline={isOnline}
+                  />
 
                 <div className="user-item-info">
                   <span className="user-item-name">{user.username}</span>
@@ -362,26 +404,12 @@ function UserList({
 
       {/* Current user profile */}
       <div className="sidebar-profile" onClick={onOpenProfile}>
-        <div className="user-avatar online">
-          {currentUser?.profilePicture && (
-            <img 
-              src={getMediaUrl(currentUser.profilePicture)} 
-              alt={currentUser?.username} 
-              onError={(e) => {
-                e.target.style.display = 'none';
-                const fallback = e.target.parentElement.querySelector('.avatar-fallback');
-                if (fallback) fallback.style.display = 'inline-block';
-              }}
-            />
-          )}
-          <span 
-            className="avatar-fallback" 
-            style={{ display: currentUser?.profilePicture ? 'none' : 'inline-block' }}
-          >
-            {currentUser?.avatar || currentUser?.username?.substring(0, 2).toUpperCase()}
-          </span>
-          <span className="user-status-dot online"></span>
-        </div>
+        <Avatar
+          profilePicture={currentUser?.profilePicture}
+          avatar={currentUser?.avatar}
+          username={currentUser?.username}
+          isOnline={true}
+        />
         <div className="sidebar-profile-info">
           <div className="sidebar-profile-name">{currentUser?.username}</div>
           <div className="sidebar-profile-status">● Online</div>
