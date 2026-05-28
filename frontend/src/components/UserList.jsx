@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Search, Check, X, UserPlus, MessageCircle, Users, BellDot, Phone, PhoneMissed, ArrowUpRight, ArrowDownLeft, Video } from 'lucide-react';
+import { Search, Check, X, UserPlus, MessageCircle, Users, BellDot, Phone, PhoneMissed, ArrowUpRight, ArrowDownLeft, Video, Trash2 } from 'lucide-react';
 import Avatar from './Avatar';
 
 
@@ -18,8 +18,24 @@ function UserList({
   activeTab = 'chats',
   onTabChange,
   onOpenProfile,
+  onDeleteCall,
+  onClearCallHistory,
 }) {
   const [searchQuery, setSearchQuery] = useState('');
+
+  const handleClearCallHistory = (e) => {
+    e.stopPropagation();
+    if (window.confirm('Are you sure you want to clear all call history? This cannot be undone.')) {
+      onClearCallHistory();
+    }
+  };
+
+  const handleDeleteCall = (e, callId) => {
+    e.stopPropagation();
+    if (window.confirm('Are you sure you want to delete this call record?')) {
+      onDeleteCall(callId);
+    }
+  };
 
   const totalUnread = Object.values(unreadCounts).reduce((a, b) => a + b, 0);
 
@@ -127,10 +143,21 @@ function UserList({
       {/* User list */}
       <div className="user-list">
         <div className="user-list-section-title">
-          {activeTab === 'chats' && `Messages · ${onlineCount} online`}
-          {activeTab === 'groups' && 'Groups'}
-          {activeTab === 'unreads' && `Unread · ${totalUnread}`}
-          {activeTab === 'calls' && `Call History · ${callHistory.length}`}
+          <span>
+            {activeTab === 'chats' && `Messages · ${onlineCount} online`}
+            {activeTab === 'groups' && 'Groups'}
+            {activeTab === 'unreads' && `Unread · ${totalUnread}`}
+            {activeTab === 'calls' && `Call History · ${callHistory.length}`}
+          </span>
+          {activeTab === 'calls' && callHistory.length > 0 && (
+            <button
+              onClick={handleClearCallHistory}
+              className="clear-history-btn"
+              title="Clear all call history"
+            >
+              Clear All
+            </button>
+          )}
         </div>
 
         {activeTab === 'groups' ? (
@@ -233,8 +260,17 @@ function UserList({
                         </span>
                       </div>
                     </div>
-                    <div className="call-item-time">
-                      {formatLastSeen(call.createdAt)}
+                    <div className="call-item-right">
+                      <div className="call-item-time">
+                        {formatLastSeen(call.createdAt)}
+                      </div>
+                      <button
+                        className="delete-call-btn"
+                        onClick={(e) => handleDeleteCall(e, call._id)}
+                        title="Delete log"
+                      >
+                        <Trash2 size={13} />
+                      </button>
                     </div>
                   </div>
                 );

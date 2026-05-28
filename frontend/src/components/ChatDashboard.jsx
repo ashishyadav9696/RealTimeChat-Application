@@ -748,6 +748,34 @@ function ChatDashboard() {
     }
   }, []);
 
+  // Delete a specific call log entry
+  const handleDeleteCall = useCallback(async (callId) => {
+    try {
+      const response = await api.delete(`/messages/calls/${callId}`);
+      if (response.data.success) {
+        toast.success('Call log deleted successfully');
+        fetchCallHistory();
+      }
+    } catch (error) {
+      console.error('Failed to delete call log:', error);
+      toast.error(error.response?.data?.message || 'Failed to delete call log');
+    }
+  }, [fetchCallHistory]);
+
+  // Clear all call history
+  const handleClearCallHistory = useCallback(async () => {
+    try {
+      const response = await api.delete('/messages/calls/history');
+      if (response.data.success) {
+        toast.success('Call history cleared successfully');
+        fetchCallHistory();
+      }
+    } catch (error) {
+      console.error('Failed to clear call history:', error);
+      toast.error(error.response?.data?.message || 'Failed to clear call history');
+    }
+  }, [fetchCallHistory]);
+
   // Leave group
   const handleLeaveGroup = useCallback(async (groupId) => {
     try {
@@ -908,6 +936,8 @@ function ChatDashboard() {
           activeTab={activeTab}
           onTabChange={setActiveTab}
           onOpenProfile={() => setShowProfileModal(true)}
+          onDeleteCall={handleDeleteCall}
+          onClearCallHistory={handleClearCallHistory}
         />
       </div>
 

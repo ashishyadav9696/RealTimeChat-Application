@@ -1034,6 +1034,67 @@ button {
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 1px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.clear-history-btn {
+  background: transparent;
+  border: none;
+  color: var(--accent-rose);
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  transition: all var(--transition-fast);
+  display: inline-flex;
+  align-items: center;
+}
+
+.clear-history-btn:hover {
+  background: var(--error-bg);
+  color: var(--error);
+}
+
+.call-item-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.call-item-time {
+  font-size: var(--font-xs);
+  color: var(--text-muted);
+}
+
+.delete-call-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.3;
+  transition: all var(--transition-fast);
+}
+
+.user-item:hover .delete-call-btn {
+  opacity: 0.7;
+}
+
+.user-item:hover .delete-call-btn:hover {
+  opacity: 1;
+  color: var(--accent-rose);
+  background: var(--error-bg);
 }
 
 .user-item {

@@ -471,6 +471,67 @@ const getCallHistory = async (req, res) => {
   }
 };
 
+// @desc    Clear all call logs / history for the current user
+// @route   DELETE /api/messages/calls/history
+// @access  Private
+const clearCallHistory = async (req, res) => {
+  try {
+    const currentUserId = req.user._id;
+
+    // Delete all call messages where the user is either the sender or receiver
+    await Message.deleteMany({
+      messageType: 'call',
+      $or: [{ sender: currentUserId }, { receiver: currentUserId }],
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Call history cleared successfully',
+    });
+  } catch (error) {
+    console.error('Clear call history error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error clearing call history',
+    });
+  }
+};
+
+// @desc    Delete a single call log / history entry
+// @route   DELETE /api/messages/calls/:callId
+// @access  Private
+const deleteCallLog = async (req, res) => {
+  try {
+    const currentUserId = req.user._id;
+    const { callId } = req.params;
+
+    // Delete the specific call message if current user is sender or receiver
+    const result = await Message.deleteOne({
+      _id: callId,
+      messageType: 'call',
+      $or: [{ sender: currentUserId }, { receiver: currentUserId }],
+    });
+
+    if (result.deletedCount === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Call log not found or unauthorized',
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Call log deleted successfully',
+    });
+  } catch (error) {
+    console.error('Delete call log error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error deleting call log',
+    });
+  }
+};
+
 module.exports = {
   getMessages,
   sendMessage,
@@ -479,4 +540,6 @@ module.exports = {
   deleteConversation,
   getUnreadCounts,
   getCallHistory,
+  clearCallHistory,
+  deleteCallLog,
 };
